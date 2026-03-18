@@ -29,6 +29,12 @@ from .utils import (
 
 _SPECIAL_LABEL_PARTS = frozenset({"pants"})
 _UPPER_CLOTHES_LABEL_ID = 4
+_EYE_BAND_TOP_RATIO = 0.2
+_EYE_BAND_BOTTOM_RATIO = 0.55
+_LEFT_EYE_X0_RATIO = 0.1
+_LEFT_EYE_X1_RATIO = 0.4
+_RIGHT_EYE_X0_RATIO = 0.6
+_RIGHT_EYE_X1_RATIO = 0.9
 
 
 def _normalize_label_name(label_name: object) -> str:
@@ -121,20 +127,21 @@ class CutoutRiggingSplitter:
         x1 = int(nonzero[:, 1].max().item()) + 1
         height = y1 - y0
         width = x1 - x0
-        # A meaningful two-eye crop needs at least a shallow vertical band and
-        # enough horizontal space to keep the left and right windows distinct.
+        # Require at least 2 rows for a visible eye band and 3 columns so the
+        # left/right eye windows can remain distinct instead of collapsing into
+        # a single block on very small face masks.
         if height < 2 or width < 3:
             return torch.zeros_like(face_mask, dtype=torch.float32)
 
         # For 2D illustration faces, eyes typically sit in the upper-middle face
         # band with a small center gap for the nose bridge. These proportional
         # windows intentionally bias toward that anime/cutout layout.
-        eye_band_y0 = y0 + max(0, int(round(height * 0.2)))
-        eye_band_y1 = min(y1, y0 + max(int(round(height * 0.55)), eye_band_y0 - y0 + 1))
-        left_eye_x0 = x0 + max(0, int(round(width * 0.1)))
-        left_eye_x1 = min(x1, x0 + max(int(round(width * 0.4)), left_eye_x0 - x0 + 1))
-        right_eye_x0 = min(x1 - 1, x0 + max(int(round(width * 0.6)), left_eye_x1 - x0 + 1))
-        right_eye_x1 = min(x1, x0 + max(int(round(width * 0.9)), right_eye_x0 - x0 + 1))
+        eye_band_y0 = y0 + max(0, int(round(height * _EYE_BAND_TOP_RATIO)))
+        eye_band_y1 = min(y1, y0 + max(int(round(height * _EYE_BAND_BOTTOM_RATIO)), eye_band_y0 - y0 + 1))
+        left_eye_x0 = x0 + max(0, int(round(width * _LEFT_EYE_X0_RATIO)))
+        left_eye_x1 = min(x1, x0 + max(int(round(width * _LEFT_EYE_X1_RATIO)), left_eye_x0 - x0 + 1))
+        right_eye_x0 = min(x1 - 1, x0 + max(int(round(width * _RIGHT_EYE_X0_RATIO)), left_eye_x1 - x0 + 1))
+        right_eye_x1 = min(x1, x0 + max(int(round(width * _RIGHT_EYE_X1_RATIO)), right_eye_x0 - x0 + 1))
 
         eye_windows = torch.zeros_like(face_mask, dtype=torch.float32)
         eye_windows[eye_band_y0:eye_band_y1, left_eye_x0:left_eye_x1] = 1.0
