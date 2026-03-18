@@ -8,27 +8,29 @@ Minimal ComfyUI custom node package for preparing cutout rigging layers from a s
 
 ## Current scope
 
-`CutoutRiggingSplitter` is implemented as a production-oriented ComfyUI node with a stable default output schema:
+`CutoutRiggingSplitter` is implemented as a production-oriented ComfyUI node tuned for 2D animation illustration cutout prep, with a stable default output schema:
 
 - full-canvas RGB image per canonical part
 - full-canvas mask per canonical part
 - `limbs_union_mask`
 - `torso_hole_mask`
 
-The node uses a single lazy-loaded human parsing backend interface. The default backend supports only the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the dependency or model is unavailable.
+The node uses a single lazy-loaded human parsing backend interface. By default it uses the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the dependency or model is unavailable.
 
 ### Canonical parts
 
 The node groups backend labels into these canonical rigging parts:
 
 - `head`
+- `eyes`
+- `hair`
 - `torso`
 - `arm_left`
 - `arm_right`
 - `leg_left`
 - `leg_right`
 
-The backend-specific mapping is explicit and verified. Hair maps to `head`, dress/scarf/skirt/belt map to `torso`, left/right shoes map to the corresponding leg outputs, and the shared `pants` label is split across `leg_left` and `leg_right` by mask midpoint. Missing parts return zero images and zero masks instead of raising errors.
+The backend-specific mapping is explicit and verified. Hair maps to `hair`, face-derived eye windows map to `eyes`, dress/scarf/skirt/belt map to `torso`, left/right shoes map to the corresponding leg outputs, and the shared `pants` label is split across `leg_left` and `leg_right` by mask midpoint. The remaining face/head area stays in `head`, and missing parts return zero images and zero masks instead of raising errors.
 
 ### Optional controls
 
@@ -66,6 +68,25 @@ If you are using a portable ComfyUI build on Windows, run the command with Comfy
 ```
 
 After installing the dependencies, restart ComfyUI and confirm that `Cutout Rigging Splitter` appears in the custom node list.
+
+## Optional Google Nano Banana / Gemini parsing backend
+
+For Google multimodal parsing, set:
+
+```bash
+export COMFY_EASYCUT_PARSING_BACKEND=google_nano_banana
+export GOOGLE_API_KEY=your_google_api_key
+```
+
+Optional overrides:
+
+```bash
+export COMFY_EASYCUT_GOOGLE_MODEL=gemini-2.5-flash-image
+export COMFY_EASYCUT_GOOGLE_API_BASE=https://generativelanguage.googleapis.com/v1beta/models
+export COMFY_EASYCUT_GOOGLE_TIMEOUT_SECONDS=60
+```
+
+The Google image API is used for image recognition and structured region extraction. Because Nano Banana/Gemini does not directly return dense semantic masks, this backend asks the model for strict JSON segment regions and reconstructs the label mask locally from returned row spans and boxes before passing it through the standard rigging pipeline.
 
 ## Notes
 

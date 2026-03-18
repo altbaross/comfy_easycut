@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
+import os
 import unittest
+from unittest import mock
 
 import numpy as np
 import torch
 
 from comfyui_cutout_rigging_splitter import NODE_CLASS_MAPPINGS
+from comfyui_cutout_rigging_splitter.backends import build_human_parsing_backend_from_environment
 from comfyui_cutout_rigging_splitter.backends.base import BaseHumanParsingBackend
+from comfyui_cutout_rigging_splitter.backends.google_nano_banana_parsing import (
+    GOOGLE_NANO_BANANA_BACKEND_NAME,
+    GoogleNanoBananaParsingBackend,
+)
 from comfyui_cutout_rigging_splitter.backends.pose_backend_optional import BasePoseRefinementBackend
 from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import (
     DEFAULT_MODEL_ID_TO_LABEL,
@@ -135,7 +143,122 @@ class TrackingPoseRefiner(BasePoseRefinementBackend):
         return refined
 
 
+class GoogleNanoBananaRequestRecorder:
+    def __init__(self, response_text: str) -> None:
+        self.response_text = response_text
+        self.calls: list[tuple[str, dict[str, str], bytes, float]] = []
+
+    def __call__(self, url: str, headers: dict[str, str], data: bytes, timeout: float) -> str:
+        self.calls.append((url, headers, data, timeout))
+        return self.response_text
+
+
 class CutoutRiggingSplitterTests(unittest.TestCase):
+    def test_google_nano_banana_backend_requires_api_key(self) -> None:
+        backend = GoogleNanoBananaParsingBackend(api_key="")
+
+        with self.assertRaisesRegex(RuntimeError, "API key"):
+            backend.load(torch.device("cpu"))
+
+    def test_google_nano_banana_backend_builds_gemini_request_and_rasterizes_segments(self) -> None:
+        recorder = GoogleNanoBananaRequestRecorder(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "analysis": {
+                                                    "subject_summary": "single anime character",
+                                                    "visual_style": "2d_animation_illustration",
+                                                    "primary_character_count": 1,
+                                                },
+                                                "segments": [
+                                                    {"label_id": 2, "label": "hair", "rows": [{"y": 0, "x0": 1, "x1": 3}]},
+                                                    {"label_id": 11, "label": "face", "boxes": [{"y0": 1, "x0": 1, "y1": 3, "x1": 3}]},
+                                                    {"label": "left-arm", "rows": [{"y": 2, "x0": 0, "x1": 1}]},
+                                                ],
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        )
+        backend = GoogleNanoBananaParsingBackend(
+            api_key="test-key",
+            model_id="gemini-test",
+            request_sender=recorder,
+        )
+        image = torch.ones((1, 3, 4, 3), dtype=torch.float32)
+
+        outputs = backend.infer(image)
+
+        self.assertEqual(len(outputs), 1)
+        mask = outputs[0]
+        self.assertEqual(mask.dtype, np.int32)
+        self.assertEqual(int(mask[0, 1]), 2)
+        self.assertEqual(int(mask[1, 1]), 11)
+        self.assertEqual(int(mask[2, 0]), 14)
+        self.assertEqual(backend.last_analysis[0]["visual_style"], "2d_animation_illustration")
+        self.assertEqual(len(recorder.calls), 1)
+        request_url, headers, data, timeout = recorder.calls[0]
+        self.assertIn("gemini-test:generateContent", request_url)
+        self.assertIn("key=test-key", request_url)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(timeout, 60.0)
+        request_body = json.loads(data.decode("utf-8"))
+        self.assertEqual(request_body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(request_body["contents"][0]["parts"][1]["inline_data"]["mime_type"], "image/png")
+
+    def test_google_nano_banana_backend_accepts_direct_json_payload(self) -> None:
+        backend = GoogleNanoBananaParsingBackend(
+            api_key="test-key",
+            request_sender=GoogleNanoBananaRequestRecorder(
+                json.dumps(
+                    {
+                        "analysis": {"subject_summary": "direct payload"},
+                        "segments": [
+                            {"label": "pants", "boxes": [{"y0": 0, "x0": 0, "y1": 2, "x1": 2}]},
+                        ],
+                    }
+                )
+            ),
+        )
+        image = torch.ones((1, 2, 3, 3), dtype=torch.float32)
+
+        outputs = backend.infer(image)
+
+        self.assertEqual(int(outputs[0][0, 0]), 6)
+        self.assertEqual(backend.last_analysis[0]["subject_summary"], "direct payload")
+
+    def test_build_human_parsing_backend_from_environment_supports_google_nano_banana(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "COMFY_EASYCUT_PARSING_BACKEND": GOOGLE_NANO_BANANA_BACKEND_NAME,
+                "GOOGLE_API_KEY": "env-key",
+                "COMFY_EASYCUT_GOOGLE_MODEL": "gemini-env",
+            },
+            clear=False,
+        ):
+            backend = build_human_parsing_backend_from_environment()
+
+        self.assertIsInstance(backend, GoogleNanoBananaParsingBackend)
+        self.assertEqual(backend.api_key, "env-key")
+        self.assertEqual(backend.model_id, "gemini-env")
+
+    def test_build_human_parsing_backend_from_environment_rejects_unknown_backend(self) -> None:
+        with mock.patch.dict(os.environ, {"COMFY_EASYCUT_PARSING_BACKEND": "unknown-backend"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "Unsupported COMFY_EASYCUT_PARSING_BACKEND"):
+                build_human_parsing_backend_from_environment()
+
     def test_process_returns_zeros_when_no_parts_detected(self) -> None:
         image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
         outputs = [np.zeros((3, 2), dtype=np.int32)]
@@ -143,7 +266,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=8)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         for index, tensor in enumerate(result):
             self.assertEqual(float(tensor.sum()), 0.0, f"expected zero output at index {index}")
 
@@ -154,6 +277,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[5], "torso")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[6], "pants")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[8], "torso")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[2], "hair")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[11], "head")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[14], "arm_left")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[15], "arm_right")
@@ -190,21 +314,25 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         for index, tensor in enumerate(result):
-            expected_shape = (2, 4, 3, 3) if index % 2 == 0 and index < 12 else (2, 4, 3)
+            expected_shape = (2, 4, 3, 3) if index % 2 == 0 and index < 16 else (2, 4, 3)
             self.assertEqual(tensor.shape, expected_shape)
             self.assertEqual(tensor.dtype, torch.float32)
 
         head_mask = result[1]
-        torso_mask = result[3]
-        arm_left_mask = result[5]
-        arm_right_mask = result[7]
-        leg_left_mask = result[9]
-        leg_right_mask = result[11]
-        limbs_union_mask = result[12]
+        eyes_mask = result[3]
+        hair_mask = result[5]
+        torso_mask = result[7]
+        arm_left_mask = result[9]
+        arm_right_mask = result[11]
+        leg_left_mask = result[13]
+        leg_right_mask = result[15]
+        limbs_union_mask = result[16]
 
         self.assertTrue(torch.equal(head_mask[0, 0], torch.tensor([1.0, 1.0, 0.0])))
+        self.assertEqual(float(eyes_mask.sum()), 0.0)
+        self.assertEqual(float(hair_mask.sum()), 0.0)
         self.assertTrue(torch.equal(torso_mask[0, 0], torch.tensor([0.0, 0.0, 1.0])))
         self.assertEqual(float(arm_left_mask[1].sum()), 0.0)
         self.assertEqual(float(arm_right_mask[1].sum()), 0.0)
@@ -235,10 +363,12 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         self.assertEqual(result[0].shape, (1, 2, 2, 3))
         self.assertEqual(result[1].shape, (1, 2, 2))
-        self.assertEqual(result[2].shape, (1, 2, 2, 3))
-        self.assertEqual(result[7].shape, (1, 1, 1))
-        self.assertEqual(float(result[7].sum()), 0.0)
+        self.assertEqual(result[6].shape, (1, 2, 2, 3))
+        self.assertEqual(result[11].shape, (1, 1, 1))
+        self.assertEqual(float(result[11].sum()), 0.0)
         self.assertEqual(node.last_crop_boxes["head"], (0, 2, 0, 2))
+        self.assertIsNone(node.last_crop_boxes["eyes"])
+        self.assertIsNone(node.last_crop_boxes["hair"])
         self.assertIsNone(node.last_crop_boxes["arm_right"])
 
     def test_crop_mode_falls_back_to_full_canvas_for_batch(self) -> None:
@@ -272,7 +402,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         result = node.process(image, feathering_amount=0, padding=0)
 
         head_mask = result[1][0]
-        torso_mask = result[3][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(head_mask[4, 4]), 0.0)
         self.assertEqual(float(torso_mask[5, 4]), 0.0)
         self.assertEqual(float(head_mask[0, 1]), 1.0)
@@ -304,8 +434,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        leg_left_mask = result[9]
-        leg_right_mask = result[11]
+        leg_left_mask = result[13]
+        leg_right_mask = result[15]
         self.assertTrue(torch.equal(leg_left_mask[0, 1], torch.tensor([0.0, 1.0, 1.0, 0.0, 0.0, 0.0])))
         self.assertTrue(torch.equal(leg_right_mask[0, 1], torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 0.0])))
         self.assertTrue(torch.equal(leg_left_mask[1, 1], torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])))
@@ -328,9 +458,45 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        torso_mask = result[3][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(torso_mask[1, 1]), 1.0)
         self.assertEqual(float(torso_mask[1, 2]), 1.0)
+
+    def test_process_separates_hair_and_derives_eyes_for_illustration_face_labels(self) -> None:
+        image = torch.ones((1, 6, 8, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 2, 2, 2, 2, 0, 0],
+                    [0, 0, 2, 2, 2, 2, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=ClothingParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        head_mask = result[1][0]
+        eyes_mask = result[3][0]
+        hair_mask = result[5][0]
+        self.assertEqual(float(hair_mask[0:2, 2:6].sum()), 8.0)
+        self.assertEqual(float(hair_mask.sum()), 8.0)
+        self.assertGreater(float(eyes_mask.sum()), 0.0)
+        self.assertEqual(float(eyes_mask[:3].sum()), 0.0)
+        # With a 4-pixel-wide face region, the heuristic keeps a one-pixel center
+        # gap, so the synthetic illustration case produces exactly 3 eye pixels.
+        self.assertEqual(float(eyes_mask[3, 2:6].sum()), 3.0)
+        self.assertEqual(float(eyes_mask[:, :2].sum()), 0.0)
+        self.assertEqual(float(eyes_mask[:, 6:].sum()), 0.0)
+        self.assertEqual(float(eyes_mask[4:].sum()), 0.0)
+        self.assertEqual(float(head_mask[0:2, 2:6].sum()), 0.0)
+        self.assertEqual(float((head_mask * eyes_mask).sum()), 0.0)
+        self.assertEqual(float(head_mask[4, 3]), 1.0)
 
     def test_process_redistributes_upper_clothes_touching_arm_to_arm_mask(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
@@ -349,8 +515,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        arm_left_mask = result[5][0]
-        torso_mask = result[3][0]
+        arm_left_mask = result[9][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(arm_left_mask.sum()), 3.0)
         self.assertEqual(float(arm_left_mask[1, 2]), 1.0)
         self.assertEqual(float(arm_left_mask[2, 2]), 1.0)
@@ -375,8 +541,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        limbs_union_mask = result[12][0]
-        torso_hole_mask = result[13][0]
+        limbs_union_mask = result[16][0]
+        torso_hole_mask = result[17][0]
         self.assertEqual(float(limbs_union_mask.sum()), 2.0)
         self.assertEqual(float(torso_hole_mask.sum()), 1.0)
         self.assertEqual(float(torso_hole_mask[2, 1]), 1.0)
@@ -437,7 +603,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
             morphology_strength=8,
             mask_threshold=1.0,
         )
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         with self.assertRaisesRegex(ValueError, "feathering_amount"):
             node.process(image, feathering_amount=-1, padding=0)
         with self.assertRaisesRegex(ValueError, "padding"):
@@ -457,7 +623,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         self.assertEqual(backend.loaded_device, image.device)
 
     def test_process_requires_backend_load_method(self) -> None:

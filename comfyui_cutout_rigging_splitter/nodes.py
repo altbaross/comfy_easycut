@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 
-from .backends import BaseHumanParsingBackend, BasePoseRefinementBackend, TransformersHumanParsingBackend
+from .backends import (
+    BaseHumanParsingBackend,
+    BasePoseRefinementBackend,
+    build_human_parsing_backend_from_environment,
+)
 from .constants import (
     CANONICAL_PARTS,
     DEFAULT_MASK_THRESHOLD,
@@ -29,6 +33,16 @@ from .utils import (
 
 _SPECIAL_LABEL_PARTS = frozenset({"pants"})
 _UPPER_CLOTHES_LABEL_ID = 4
+_EYE_BAND_TOP_RATIO = 0.2
+_EYE_BAND_BOTTOM_RATIO = 0.55
+_LEFT_EYE_X0_RATIO = 0.1
+_LEFT_EYE_X1_RATIO = 0.4
+_RIGHT_EYE_X0_RATIO = 0.6
+_RIGHT_EYE_X1_RATIO = 0.9
+
+
+def _normalize_label_name(label_name: object) -> str:
+    return str(label_name).strip().lower().replace("_", "-").replace(" ", "-")
 
 
 class CutoutRiggingSplitter:
@@ -42,7 +56,7 @@ class CutoutRiggingSplitter:
         backend: BaseHumanParsingBackend | None = None,
         pose_refiner: BasePoseRefinementBackend | None = None,
     ) -> None:
-        self.backend = backend or TransformersHumanParsingBackend()
+        self.backend = backend or build_human_parsing_backend_from_environment()
         self.pose_refiner = pose_refiner
         self.last_crop_boxes: dict[str, tuple[int, int, int, int] | None] = {}
 
@@ -90,6 +104,84 @@ class CutoutRiggingSplitter:
                 if part_name not in CANONICAL_PARTS:
                     continue
                 part_masks[part_name][batch_index] = torch.maximum(part_masks[part_name][batch_index], sample_part_mask)
+
+        return part_masks
+
+    def _label_ids_for_names(self, *label_names: str) -> set[int]:
+        normalized_targets = {_normalize_label_name(label_name) for label_name in label_names}
+        return {
+            int(label_id)
+            for label_id, label_name in getattr(self.backend, "id_to_label", {}).items()
+            if _normalize_label_name(label_name) in normalized_targets
+        }
+
+    @staticmethod
+    def _make_eye_mask(face_mask: torch.Tensor) -> torch.Tensor:
+        if face_mask.ndim != 2:
+            raise ValueError("_make_eye_mask expects a [H, W] face mask.")
+
+        binary = face_mask > 0.5
+        if not bool(binary.any()):
+            return torch.zeros_like(face_mask, dtype=torch.float32)
+
+        nonzero = torch.nonzero(binary, as_tuple=False)
+        y0 = int(nonzero[:, 0].min().item())
+        y1 = int(nonzero[:, 0].max().item()) + 1
+        x0 = int(nonzero[:, 1].min().item())
+        x1 = int(nonzero[:, 1].max().item()) + 1
+        height = y1 - y0
+        width = x1 - x0
+        # Require at least 2 rows for a visible eye band and 3 columns so the
+        # left/right eye windows can remain distinct instead of collapsing into
+        # a single block on very small face masks.
+        if height < 2 or width < 3:
+            return torch.zeros_like(face_mask, dtype=torch.float32)
+
+        # For 2D illustration faces, eyes typically sit in the upper-middle face
+        # band with a small center gap for the nose bridge. These proportional
+        # windows intentionally bias toward that anime/cutout layout.
+        eye_band_y0 = y0 + int(round(height * _EYE_BAND_TOP_RATIO))
+        min_eye_band_height = eye_band_y0 - y0 + 1
+        # Always keep at least one scanline in the eye band even for short face
+        # masks so that small illustration faces can still produce an eye layer.
+        eye_band_y1 = min(y1, y0 + max(int(round(height * _EYE_BAND_BOTTOM_RATIO)), min_eye_band_height))
+        left_eye_x0 = x0 + int(round(width * _LEFT_EYE_X0_RATIO))
+        left_eye_x1 = min(x1, x0 + max(int(round(width * _LEFT_EYE_X1_RATIO)), left_eye_x0 - x0 + 1))
+        # The right-eye window is clamped to start after the computed left-eye
+        # window so the two eye regions stay separated even on narrow face masks.
+        right_eye_x0 = min(x1 - 1, x0 + max(int(round(width * _RIGHT_EYE_X0_RATIO)), left_eye_x1 - x0 + 1))
+        right_eye_x1 = min(x1, x0 + max(int(round(width * _RIGHT_EYE_X1_RATIO)), right_eye_x0 - x0 + 1))
+
+        eye_windows = torch.zeros_like(face_mask, dtype=torch.float32)
+        eye_windows[eye_band_y0:eye_band_y1, left_eye_x0:left_eye_x1] = 1.0
+        eye_windows[eye_band_y0:eye_band_y1, right_eye_x0:right_eye_x1] = 1.0
+        return (eye_windows * binary.to(torch.float32)).clamp(0.0, 1.0)
+
+    def _derive_illustration_part_masks(
+        self,
+        label_masks: list[torch.Tensor],
+        part_masks: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        face_label_ids = self._label_ids_for_names("face")
+        if not face_label_ids:
+            return part_masks
+
+        for batch_index, label_mask in enumerate(label_masks):
+            sample_mask = label_mask.to(device=part_masks["head"].device, dtype=torch.int64)
+            face_mask = torch.zeros_like(part_masks["head"][batch_index])
+            for label_id in face_label_ids:
+                face_mask = torch.maximum(face_mask, (sample_mask == label_id).to(torch.float32))
+            if float(face_mask.max()) == 0.0:
+                continue
+
+            eyes_mask = self._make_eye_mask(face_mask)
+            part_masks["eyes"][batch_index] = eyes_mask
+            if float(part_masks["hair"][batch_index].max()) > 0.0:
+                part_masks["head"][batch_index] = (
+                    part_masks["head"][batch_index] * (1.0 - part_masks["hair"][batch_index])
+                ).clamp(0.0, 1.0)
+            if float(eyes_mask.max()) > 0.0:
+                part_masks["head"][batch_index] = (part_masks["head"][batch_index] * (1.0 - eyes_mask)).clamp(0.0, 1.0)
 
         return part_masks
 
@@ -262,6 +354,7 @@ class CutoutRiggingSplitter:
         label_arrays = self._load_and_infer(image)
         label_masks = self._coerce_label_masks(label_arrays, image)
         logical_part_masks = self._part_masks_from_labels(label_masks, image)
+        logical_part_masks = self._derive_illustration_part_masks(label_masks, logical_part_masks)
         logical_part_masks = self._redistribute_garments_to_limbs(label_masks, logical_part_masks)
         logical_part_masks = select_primary_person_masks(logical_part_masks)
         logical_part_masks = self._maybe_refine_with_pose(image, logical_part_masks, enable_pose_refinement)
@@ -301,6 +394,10 @@ class CutoutRiggingSplitter:
         return (
             part_images["head"],
             output_part_masks["head"],
+            part_images["eyes"],
+            output_part_masks["eyes"],
+            part_images["hair"],
+            output_part_masks["hair"],
             part_images["torso"],
             output_part_masks["torso"],
             part_images["arm_left"],

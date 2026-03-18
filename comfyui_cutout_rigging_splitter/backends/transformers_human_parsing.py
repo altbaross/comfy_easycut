@@ -32,7 +32,7 @@ DEFAULT_MODEL_ID_TO_LABEL = {
 
 DEFAULT_MODEL_LABEL_ID_TO_PART = {
     1: "head",
-    2: "head",
+    2: "hair",
     3: "head",
     4: "torso",
     5: "torso",
