@@ -7,6 +7,9 @@ CANONICAL_PARTS = (
     "leg_right",
 )
 
+MAX_FEATHERING_AMOUNT = 16
+MAX_PADDING = 128
+
 PART_OUTPUT_NAMES = (
     "head_image",
     "head_mask",

@@ -45,6 +45,18 @@ class StubParsingBackend(BaseHumanParsingBackend):
         return self.outputs
 
 
+class NonListParsingBackend(StubParsingBackend):
+    def infer(self, image_bhwc: torch.Tensor) -> object:
+        self.load(image_bhwc.device)
+        return tuple(self.outputs)
+
+
+class MissingMappingBackend(StubParsingBackend):
+    def __init__(self, outputs: list[np.ndarray]) -> None:
+        super().__init__(outputs)
+        del self.label_id_to_part
+
+
 class CutoutRiggingSplitterTests(unittest.TestCase):
     def test_default_backend_uses_explicit_verified_label_constants(self) -> None:
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[11], "face")
@@ -139,6 +151,34 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
 
         with self.assertRaisesRegex(RuntimeError, "invalid label mask shape"):
+            node.process(image, feathering_amount=0, padding=0)
+
+    def test_process_validates_parameter_ranges(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=16, padding=128)
+        self.assertEqual(len(result), 14)
+        with self.assertRaisesRegex(ValueError, "feathering_amount"):
+            node.process(image, feathering_amount=-1, padding=0)
+        with self.assertRaisesRegex(ValueError, "padding"):
+            node.process(image, feathering_amount=0, padding=129)
+
+    def test_process_requires_backend_label_mask_list(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=NonListParsingBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "must return a list"):
+            node.process(image, feathering_amount=0, padding=0)
+
+    def test_process_requires_backend_label_mapping(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=MissingMappingBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "label_id_to_part"):
             node.process(image, feathering_amount=0, padding=0)
 
     def test_backend_rejects_unverified_model_id(self) -> None:
