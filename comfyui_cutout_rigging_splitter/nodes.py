@@ -29,6 +29,8 @@ class CutoutRiggingSplitter:
     def _part_masks_from_labels(self, label_masks: list[torch.Tensor], image: torch.Tensor) -> dict[str, torch.Tensor]:
         if not hasattr(self.backend, "label_id_to_part"):
             raise RuntimeError("Human parsing backend is missing the required 'label_id_to_part' mapping.")
+        if not isinstance(getattr(self.backend, "label_id_to_part"), dict):
+            raise RuntimeError("Human parsing backend 'label_id_to_part' mapping must be a dictionary.")
         part_masks = {
             part: zeros_mask_like(image)
             for part in CANONICAL_PARTS
@@ -93,6 +95,15 @@ class CutoutRiggingSplitter:
         if not isinstance(padding, int) or not 0 <= padding <= MAX_PADDING:
             raise ValueError(f"padding must be an integer in the range [0, {MAX_PADDING}].")
 
+        try:
+            backend_load = self.backend.load
+        except AttributeError:
+            raise RuntimeError("Human parsing backend is missing the required load(device: torch.device) method.")
+        if not callable(backend_load):
+            raise RuntimeError(
+                "Human parsing backend load attribute must be callable and accept a torch.device parameter."
+            )
+        backend_load(image.device)
         label_arrays = self.backend.infer(image)
         if not isinstance(label_arrays, list):
             raise RuntimeError("Human parsing backend must return a list of per-sample label masks.")
