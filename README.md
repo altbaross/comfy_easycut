@@ -15,7 +15,7 @@ This implementation keeps the default output schema stable for ComfyUI:
 - `limbs_union_mask`
 - `torso_hole_mask`
 
-The node uses a single lazy-loaded human parsing backend interface. The default backend expects an optional Hugging Face semantic segmentation model and raises a clear runtime error if the optional dependency or model is unavailable.
+The node uses a single lazy-loaded human parsing backend interface. The default backend expects an optional Hugging Face semantic segmentation model with an explicit verified label mapping for `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the optional dependency or model is unavailable.
 
 `feathering_amount` softly feathers returned part masks and part images for display, while `padding` expands the torso region used for the conservative `torso_hole_mask`.
 

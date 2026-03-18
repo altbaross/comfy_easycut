@@ -1,54 +1,10 @@
 from __future__ import annotations
 
-from typing import Iterable
-
 import torch
 
 from .backends import BaseHumanParsingBackend, TransformersHumanParsingBackend
 from .constants import CANONICAL_PARTS, RETURN_NAMES, RETURN_TYPES
 from .utils import dilate_mask, ensure_image_bhwc, feather_mask, make_part_image, zeros_mask_like
-
-
-def _normalize_label_name(value: object) -> str:
-    return str(value).strip().lower().replace("_", "-").replace(" ", "-")
-
-
-LIP_STYLE_LABEL_TO_PART = {
-    "hat": "head",
-    "hair": "head",
-    "face": "head",
-    "head": "head",
-    "sunglasses": "head",
-    "upper-clothes": "torso",
-    "upperclothes": "torso",
-    "coat": "torso",
-    "dress": "torso",
-    "scarf": "torso",
-    "jumpsuits": "torso",
-    "jumpsuit": "torso",
-    "torso": "torso",
-    "neck": "torso",
-    "left-arm": "arm_left",
-    "left hand": "arm_left",
-    "left-hand": "arm_left",
-    "lefthand": "arm_left",
-    "right-arm": "arm_right",
-    "right hand": "arm_right",
-    "right-hand": "arm_right",
-    "righthand": "arm_right",
-    "left-leg": "leg_left",
-    "left shoe": "leg_left",
-    "left-shoe": "leg_left",
-    "left-foot": "leg_left",
-    "leftfoot": "leg_left",
-    "pants-left": "leg_left",
-    "right-leg": "leg_right",
-    "right shoe": "leg_right",
-    "right-shoe": "leg_right",
-    "right-foot": "leg_right",
-    "rightfoot": "leg_right",
-    "pants-right": "leg_right",
-}
 
 
 class CutoutRiggingSplitter:
@@ -70,15 +26,15 @@ class CutoutRiggingSplitter:
             }
         }
 
-    def _part_masks_from_labels(self, label_masks: Iterable[torch.Tensor], image: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _part_masks_from_labels(self, label_masks: list[torch.Tensor], image: torch.Tensor) -> dict[str, torch.Tensor]:
         part_masks = {
             part: zeros_mask_like(image)
             for part in CANONICAL_PARTS
         }
-
-        id_to_label = {
-            int(label_id): _normalize_label_name(label_name)
-            for label_id, label_name in getattr(self.backend, "id_to_label", {}).items()
+        label_id_to_part = {
+            int(label_id): part_name
+            for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()
+            if part_name in CANONICAL_PARTS
         }
 
         for batch_index, label_mask in enumerate(label_masks):
@@ -88,10 +44,7 @@ class CutoutRiggingSplitter:
                 for part in CANONICAL_PARTS
             }
             for label_id in torch.unique(sample_mask):
-                label_name = id_to_label.get(int(label_id.item()))
-                if label_name is None:
-                    continue
-                part_name = LIP_STYLE_LABEL_TO_PART.get(label_name)
+                part_name = label_id_to_part.get(int(label_id.item()))
                 if part_name is None:
                     continue
                 sample_parts[part_name] = torch.maximum(

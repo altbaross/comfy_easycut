@@ -14,6 +14,48 @@ DEFAULT_MODEL_ID = os.getenv(
     "mattmdjaga/segformer_b2_clothes",
 )
 
+DEFAULT_MODEL_ID_TO_LABEL = {
+    0: "background",
+    1: "hat",
+    2: "hair",
+    3: "sunglasses",
+    4: "upper-clothes",
+    5: "skirt",
+    6: "pants",
+    7: "dress",
+    8: "belt",
+    9: "left-shoe",
+    10: "right-shoe",
+    11: "face",
+    12: "left-leg",
+    13: "right-leg",
+    14: "left-arm",
+    15: "right-arm",
+    16: "bag",
+    17: "scarf",
+}
+
+DEFAULT_MODEL_LABEL_ID_TO_PART = {
+    1: "head",
+    2: "head",
+    3: "head",
+    4: "torso",
+    7: "torso",
+    9: "leg_left",
+    10: "leg_right",
+    11: "head",
+    12: "leg_left",
+    13: "leg_right",
+    14: "arm_left",
+    15: "arm_right",
+    17: "torso",
+}
+
+DEFAULT_MODEL_LABEL_TO_PART = {
+    DEFAULT_MODEL_ID_TO_LABEL[label_id]: part_name
+    for label_id, part_name in DEFAULT_MODEL_LABEL_ID_TO_PART.items()
+}
+
 
 def _normalize_label_name(value: object) -> str:
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
@@ -60,9 +102,26 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
         self._model.eval()
         self._device = device
         raw_id_to_label = getattr(self._model.config, "id2label", {}) or {}
-        self.id_to_label = {
+        normalized_config_labels = {
             int(label_id): _normalize_label_name(label_name)
             for label_id, label_name in raw_id_to_label.items()
+        }
+
+        if self.model_id == DEFAULT_MODEL_ID:
+            if normalized_config_labels and normalized_config_labels != DEFAULT_MODEL_ID_TO_LABEL:
+                raise RuntimeError(
+                    "Loaded human parsing model labels do not match the verified label mapping "
+                    f"for '{DEFAULT_MODEL_ID}'."
+                )
+            self.id_to_label = dict(DEFAULT_MODEL_ID_TO_LABEL)
+            self.label_id_to_part = dict(DEFAULT_MODEL_LABEL_ID_TO_PART)
+            return
+
+        self.id_to_label = normalized_config_labels
+        self.label_id_to_part = {
+            label_id: DEFAULT_MODEL_LABEL_TO_PART[label_name]
+            for label_id, label_name in self.id_to_label.items()
+            if label_name in DEFAULT_MODEL_LABEL_TO_PART
         }
 
     def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:

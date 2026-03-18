@@ -7,6 +7,10 @@ import torch
 
 from comfyui_cutout_rigging_splitter import NODE_CLASS_MAPPINGS
 from comfyui_cutout_rigging_splitter.backends.base import BaseHumanParsingBackend
+from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import (
+    DEFAULT_MODEL_ID_TO_LABEL,
+    DEFAULT_MODEL_LABEL_ID_TO_PART,
+)
 from comfyui_cutout_rigging_splitter.nodes import CutoutRiggingSplitter
 
 
@@ -23,6 +27,14 @@ class StubParsingBackend(BaseHumanParsingBackend):
             5: "left-leg",
             6: "right-leg",
         }
+        self.label_id_to_part = {
+            1: "head",
+            2: "torso",
+            3: "arm_left",
+            4: "arm_right",
+            5: "leg_left",
+            6: "leg_right",
+        }
 
     def load(self, device: torch.device) -> None:
         del device
@@ -33,6 +45,14 @@ class StubParsingBackend(BaseHumanParsingBackend):
 
 
 class CutoutRiggingSplitterTests(unittest.TestCase):
+    def test_default_backend_uses_explicit_verified_label_constants(self) -> None:
+        self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[11], "face")
+        self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[14], "left-arm")
+        self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[15], "right-arm")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[11], "head")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[14], "arm_left")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[15], "arm_right")
+
     def test_node_registration_exports_expected_class(self) -> None:
         self.assertIn("CutoutRiggingSplitter", NODE_CLASS_MAPPINGS)
         self.assertIs(NODE_CLASS_MAPPINGS["CutoutRiggingSplitter"], CutoutRiggingSplitter)

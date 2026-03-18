@@ -8,9 +8,11 @@ import torch
 
 class BaseHumanParsingBackend(ABC):
     id_to_label: dict[int, str]
+    label_id_to_part: dict[int, str]
 
     def __init__(self) -> None:
         self.id_to_label = {}
+        self.label_id_to_part = {}
 
     @abstractmethod
     def load(self, device: torch.device) -> None:
