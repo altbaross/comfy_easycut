@@ -27,6 +27,8 @@ class CutoutRiggingSplitter:
         }
 
     def _part_masks_from_labels(self, label_masks: list[torch.Tensor], image: torch.Tensor) -> dict[str, torch.Tensor]:
+        if not hasattr(self.backend, "label_id_to_part"):
+            raise RuntimeError("Human parsing backend is missing the required 'label_id_to_part' mapping.")
         part_masks = {
             part: zeros_mask_like(image)
             for part in CANONICAL_PARTS
@@ -82,8 +84,14 @@ class CutoutRiggingSplitter:
     ) -> tuple[torch.Tensor, ...]:
         """Split a ComfyUI IMAGE tensor into canonical cutout-rigging part images and masks."""
         image = ensure_image_bhwc(image)
+        if not isinstance(feathering_amount, int) or not 0 <= feathering_amount <= 16:
+            raise ValueError("feathering_amount must be an integer in the range [0, 16].")
+        if not isinstance(padding, int) or not 0 <= padding <= 128:
+            raise ValueError("padding must be an integer in the range [0, 128].")
 
         label_arrays = self.backend.infer(image)
+        if not isinstance(label_arrays, list):
+            raise RuntimeError("Human parsing backend must return a list of per-sample label masks.")
         if len(label_arrays) != image.shape[0]:
             raise RuntimeError(
                 "Human parsing backend returned an unexpected number of label masks: "
