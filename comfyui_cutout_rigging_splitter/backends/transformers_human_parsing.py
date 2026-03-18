@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -9,10 +7,7 @@ import torch.nn.functional as F
 from .base import BaseHumanParsingBackend
 
 
-DEFAULT_MODEL_ID = os.getenv(
-    "COMFY_EASYCUT_HUMAN_PARSING_MODEL",
-    "mattmdjaga/segformer_b2_clothes",
-)
+DEFAULT_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
 
 DEFAULT_MODEL_ID_TO_LABEL = {
     0: "background",
@@ -51,12 +46,6 @@ DEFAULT_MODEL_LABEL_ID_TO_PART = {
     17: "torso",
 }
 
-DEFAULT_MODEL_LABEL_TO_PART = {
-    DEFAULT_MODEL_ID_TO_LABEL[label_id]: part_name
-    for label_id, part_name in DEFAULT_MODEL_LABEL_ID_TO_PART.items()
-}
-
-
 def _normalize_label_name(value: object) -> str:
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
 
@@ -79,6 +68,11 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
     def load(self, device: torch.device) -> None:
         if self._model is not None and self._device == device:
             return
+        if self.model_id != DEFAULT_MODEL_ID:
+            raise RuntimeError(
+                "CutoutRiggingSplitter currently supports only the verified human parsing model "
+                f"'{DEFAULT_MODEL_ID}'. Received '{self.model_id}'."
+            )
 
         try:
             from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
@@ -106,23 +100,13 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
             int(label_id): _normalize_label_name(label_name)
             for label_id, label_name in raw_id_to_label.items()
         }
-
-        if self.model_id == DEFAULT_MODEL_ID:
-            if normalized_config_labels and normalized_config_labels != DEFAULT_MODEL_ID_TO_LABEL:
-                raise RuntimeError(
-                    "Loaded human parsing model labels do not match the verified label mapping "
-                    f"for '{DEFAULT_MODEL_ID}'."
-                )
-            self.id_to_label = dict(DEFAULT_MODEL_ID_TO_LABEL)
-            self.label_id_to_part = dict(DEFAULT_MODEL_LABEL_ID_TO_PART)
-            return
-
-        self.id_to_label = normalized_config_labels
-        self.label_id_to_part = {
-            label_id: DEFAULT_MODEL_LABEL_TO_PART[label_name]
-            for label_id, label_name in self.id_to_label.items()
-            if label_name in DEFAULT_MODEL_LABEL_TO_PART
-        }
+        if normalized_config_labels and normalized_config_labels != DEFAULT_MODEL_ID_TO_LABEL:
+            raise RuntimeError(
+                "Loaded human parsing model labels do not match the verified label mapping "
+                f"for '{DEFAULT_MODEL_ID}'."
+            )
+        self.id_to_label = dict(DEFAULT_MODEL_ID_TO_LABEL)
+        self.label_id_to_part = dict(DEFAULT_MODEL_LABEL_ID_TO_PART)
 
     def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:
         if image_bhwc.ndim != 4 or image_bhwc.shape[-1] != 3:
