@@ -61,7 +61,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         ]
         node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
 
-        result = node.process(image, feathering_amount=2, padding=8)
+        result = node.process(image, feathering_amount=0, padding=0)
 
         self.assertEqual(len(result), 14)
         for index, tensor in enumerate(result):
@@ -76,6 +76,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         leg_left_mask = result[9]
         leg_right_mask = result[11]
         limbs_union_mask = result[12]
+        torso_hole_mask = result[13]
 
         self.assertTrue(torch.equal(head_mask[0, 0], torch.tensor([1.0, 1.0, 0.0])))
         self.assertTrue(torch.equal(torso_mask[0, 0], torch.tensor([0.0, 0.0, 1.0])))
@@ -84,9 +85,32 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(float(leg_left_mask[1].sum()), 0.0)
         self.assertEqual(float(leg_right_mask[1].sum()), 0.0)
         self.assertEqual(float(limbs_union_mask[1].sum()), 0.0)
+        self.assertEqual(float(torso_hole_mask[0].sum()), 0.0)
 
         head_image = result[0]
         self.assertTrue(torch.equal(head_image[0], image[0] * head_mask[0].unsqueeze(-1)))
+
+    def test_feathering_softens_output_masks_without_breaking_shapes(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 0, 0],
+                    [0, 1, 1, 0],
+                    [0, 1, 1, 0],
+                    [0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=1, padding=1)
+
+        head_mask = result[1]
+        self.assertEqual(head_mask.shape, (1, 4, 4))
+        self.assertGreater(float(head_mask[0, 1, 0]), 0.0)
+        self.assertLess(float(head_mask[0, 1, 0]), 1.0)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import torch
 
 from .backends import BaseHumanParsingBackend, TransformersHumanParsingBackend
 from .constants import CANONICAL_PARTS, RETURN_NAMES, RETURN_TYPES
-from .utils import ensure_image_bhwc, make_part_image, zeros_mask_like
+from .utils import dilate_mask, ensure_image_bhwc, feather_mask, make_part_image, zeros_mask_like
 
 
 def _normalize_label_name(value: object) -> str:
@@ -104,8 +104,13 @@ class CutoutRiggingSplitter:
 
         return part_masks
 
-    def process(self, image: torch.Tensor, feathering_amount: int = 2, padding: int = 8):
-        del feathering_amount, padding
+    def process(
+        self,
+        image: torch.Tensor,
+        feathering_amount: int = 2,
+        padding: int = 8,
+    ) -> tuple[torch.Tensor, ...]:
+        """Split a ComfyUI IMAGE tensor into canonical cutout-rigging part images and masks."""
         image = ensure_image_bhwc(image)
 
         label_arrays = self.backend.infer(image)
@@ -119,32 +124,36 @@ class CutoutRiggingSplitter:
             torch.as_tensor(label_array, dtype=torch.int64, device=image.device)
             for label_array in label_arrays
         ]
-        part_masks = self._part_masks_from_labels(label_masks, image)
+        logical_part_masks = self._part_masks_from_labels(label_masks, image)
+        output_part_masks = {
+            part_name: feather_mask(part_mask, feathering_amount)
+            for part_name, part_mask in logical_part_masks.items()
+        }
 
         part_images = {
             part_name: make_part_image(image, part_mask)
-            for part_name, part_mask in part_masks.items()
+            for part_name, part_mask in output_part_masks.items()
         }
 
         limbs_union_mask = torch.maximum(
-            torch.maximum(part_masks["arm_left"], part_masks["arm_right"]),
-            torch.maximum(part_masks["leg_left"], part_masks["leg_right"]),
+            torch.maximum(logical_part_masks["arm_left"], logical_part_masks["arm_right"]),
+            torch.maximum(logical_part_masks["leg_left"], logical_part_masks["leg_right"]),
         )
-        torso_hole_mask = limbs_union_mask.clone()
+        torso_hole_mask = limbs_union_mask * dilate_mask(logical_part_masks["torso"], padding)
 
         return (
             part_images["head"],
-            part_masks["head"],
+            output_part_masks["head"],
             part_images["torso"],
-            part_masks["torso"],
+            output_part_masks["torso"],
             part_images["arm_left"],
-            part_masks["arm_left"],
+            output_part_masks["arm_left"],
             part_images["arm_right"],
-            part_masks["arm_right"],
+            output_part_masks["arm_right"],
             part_images["leg_left"],
-            part_masks["leg_left"],
+            output_part_masks["leg_left"],
             part_images["leg_right"],
-            part_masks["leg_right"],
+            output_part_masks["leg_right"],
             limbs_union_mask,
             torso_hole_mask,
         )

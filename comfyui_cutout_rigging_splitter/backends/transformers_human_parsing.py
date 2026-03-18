@@ -20,6 +20,13 @@ def _normalize_label_name(value: object) -> str:
 
 
 class TransformersHumanParsingBackend(BaseHumanParsingBackend):
+    """Lazy-loaded semantic human parsing backend backed by Hugging Face transformers.
+
+    Args:
+        model_id: Model identifier passed to ``from_pretrained`` for both the
+            image processor and semantic segmentation model.
+    """
+
     def __init__(self, model_id: str = DEFAULT_MODEL_ID) -> None:
         super().__init__()
         self.model_id = model_id
@@ -33,7 +40,7 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
 
         try:
             from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
-        except Exception as exc:  # pragma: no cover - depends on optional install
+        except (ImportError, ModuleNotFoundError) as exc:  # pragma: no cover - depends on optional install
             raise RuntimeError(
                 "CutoutRiggingSplitter requires the optional 'transformers' package "
                 f"for human parsing backend '{self.model_id}'."
@@ -42,7 +49,7 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
         try:
             image_processor = AutoImageProcessor.from_pretrained(self.model_id)
             model = AutoModelForSemanticSegmentation.from_pretrained(self.model_id)
-        except Exception as exc:  # pragma: no cover - depends on optional model download
+        except (OSError, ValueError, RuntimeError) as exc:  # pragma: no cover - depends on optional model download
             raise RuntimeError(
                 "Failed to load human parsing model "
                 f"'{self.model_id}'. Install model dependencies and verify network or local cache access."
@@ -62,15 +69,14 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
         if image_bhwc.ndim != 4 or image_bhwc.shape[-1] != 3:
             raise ValueError("Expected image tensor with shape [B, H, W, 3].")
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.load(device)
+        self.load(image_bhwc.device)
         assert self._image_processor is not None
         assert self._model is not None
         assert self._device is not None
 
         try:
             from PIL import Image
-        except Exception as exc:  # pragma: no cover - depends on optional install
+        except (ImportError, ModuleNotFoundError) as exc:  # pragma: no cover - depends on optional install
             raise RuntimeError("CutoutRiggingSplitter requires Pillow for image conversion.") from exc
 
         image_uint8 = (
