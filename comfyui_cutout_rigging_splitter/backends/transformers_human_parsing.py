@@ -51,6 +51,11 @@ DEFAULT_MODEL_LABEL_ID_TO_PART = {
     17: "torso",
 }
 
+DEFAULT_MODEL_LABEL_TO_PART = {
+    DEFAULT_MODEL_ID_TO_LABEL[label_id]: part_name
+    for label_id, part_name in DEFAULT_MODEL_LABEL_ID_TO_PART.items()
+}
+
 
 def _normalize_label_name(value: object) -> str:
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
@@ -114,10 +119,9 @@ class TransformersHumanParsingBackend(BaseHumanParsingBackend):
 
         self.id_to_label = normalized_config_labels
         self.label_id_to_part = {
-            label_id: DEFAULT_MODEL_LABEL_ID_TO_PART[default_label_id]
+            label_id: DEFAULT_MODEL_LABEL_TO_PART[label_name]
             for label_id, label_name in self.id_to_label.items()
-            for default_label_id, default_label_name in DEFAULT_MODEL_ID_TO_LABEL.items()
-            if label_name == default_label_name and default_label_id in DEFAULT_MODEL_LABEL_ID_TO_PART
+            if label_name in DEFAULT_MODEL_LABEL_TO_PART
         }
 
     def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:
