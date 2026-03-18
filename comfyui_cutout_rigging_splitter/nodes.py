@@ -57,6 +57,23 @@ class CutoutRiggingSplitter:
 
         return part_masks
 
+    def _coerce_label_masks(
+        self,
+        label_arrays: list[object],
+        image: torch.Tensor,
+    ) -> list[torch.Tensor]:
+        expected_shape = (image.shape[1], image.shape[2])
+        label_masks: list[torch.Tensor] = []
+        for batch_index, label_array in enumerate(label_arrays):
+            label_mask = torch.as_tensor(label_array, dtype=torch.int64, device=image.device)
+            if label_mask.ndim != 2 or tuple(label_mask.shape) != expected_shape:
+                raise RuntimeError(
+                    "Human parsing backend returned an invalid label mask shape for batch index "
+                    f"{batch_index}: expected {expected_shape}, received {tuple(label_mask.shape)}."
+                )
+            label_masks.append(label_mask)
+        return label_masks
+
     def process(
         self,
         image: torch.Tensor,
@@ -73,10 +90,7 @@ class CutoutRiggingSplitter:
                 f"expected {image.shape[0]}, received {len(label_arrays)}."
             )
 
-        label_masks = [
-            torch.as_tensor(label_array, dtype=torch.int64, device=image.device)
-            for label_array in label_arrays
-        ]
+        label_masks = self._coerce_label_masks(label_arrays, image)
         logical_part_masks = self._part_masks_from_labels(label_masks, image)
         output_part_masks = {
             part_name: feather_mask(part_mask, feathering_amount)
