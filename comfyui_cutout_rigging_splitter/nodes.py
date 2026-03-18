@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from .backends import BaseHumanParsingBackend, TransformersHumanParsingBackend
-from .constants import CANONICAL_PARTS, RETURN_NAMES, RETURN_TYPES
+from .constants import CANONICAL_PARTS, MAX_FEATHERING_AMOUNT, MAX_PADDING, RETURN_NAMES, RETURN_TYPES
 from .utils import dilate_mask, ensure_image_bhwc, feather_mask, make_part_image, zeros_mask_like
 
 
@@ -21,8 +21,8 @@ class CutoutRiggingSplitter:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "feathering_amount": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
-                "padding": ("INT", {"default": 8, "min": 0, "max": 128, "step": 1}),
+                "feathering_amount": ("INT", {"default": 2, "min": 0, "max": MAX_FEATHERING_AMOUNT, "step": 1}),
+                "padding": ("INT", {"default": 8, "min": 0, "max": MAX_PADDING, "step": 1}),
             }
         }
 
@@ -84,10 +84,14 @@ class CutoutRiggingSplitter:
     ) -> tuple[torch.Tensor, ...]:
         """Split a ComfyUI IMAGE tensor into canonical cutout-rigging part images and masks."""
         image = ensure_image_bhwc(image)
-        if not isinstance(feathering_amount, int) or not 0 <= feathering_amount <= 16:
-            raise ValueError("feathering_amount must be an integer in the range [0, 16].")
-        if not isinstance(padding, int) or not 0 <= padding <= 128:
-            raise ValueError("padding must be an integer in the range [0, 128].")
+        # ComfyUI enforces these bounds through INPUT_TYPES, but keep explicit checks
+        # here so direct Python callers and custom backend integrations fail clearly.
+        if not isinstance(feathering_amount, int) or not 0 <= feathering_amount <= MAX_FEATHERING_AMOUNT:
+            raise ValueError(
+                f"feathering_amount must be an integer in the range [0, {MAX_FEATHERING_AMOUNT}]."
+            )
+        if not isinstance(padding, int) or not 0 <= padding <= MAX_PADDING:
+            raise ValueError(f"padding must be an integer in the range [0, {MAX_PADDING}].")
 
         label_arrays = self.backend.infer(image)
         if not isinstance(label_arrays, list):

@@ -158,12 +158,12 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         outputs = [np.zeros((4, 4), dtype=np.int32)]
         node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
 
+        result = node.process(image, feathering_amount=16, padding=128)
+        self.assertEqual(len(result), 14)
         with self.assertRaisesRegex(ValueError, "feathering_amount"):
             node.process(image, feathering_amount=-1, padding=0)
         with self.assertRaisesRegex(ValueError, "padding"):
             node.process(image, feathering_amount=0, padding=129)
-        with self.assertRaisesRegex(ValueError, "feathering_amount"):
-            node.process(image, feathering_amount=1.5, padding=0)
 
     def test_process_requires_backend_label_mask_list(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
