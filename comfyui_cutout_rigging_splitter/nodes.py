@@ -5,7 +5,13 @@ import torch
 from .backends import (
     BaseHumanParsingBackend,
     BasePoseRefinementBackend,
+    GoogleNanoBananaParsingBackend,
     build_human_parsing_backend_from_environment,
+)
+from .backends.google_nano_banana_parsing import (
+    GOOGLE_NANO_BANANA_API_BASE,
+    GOOGLE_NANO_BANANA_MODEL_ID,
+    GOOGLE_NANO_BANANA_TIMEOUT_SECONDS,
 )
 from .constants import (
     CANONICAL_PARTS,
@@ -39,6 +45,7 @@ _LEFT_EYE_X0_RATIO = 0.1
 _LEFT_EYE_X1_RATIO = 0.4
 _RIGHT_EYE_X0_RATIO = 0.6
 _RIGHT_EYE_X1_RATIO = 0.9
+_BACKEND_CONNECTOR_TYPE = "EASYCUT_HUMAN_PARSING_BACKEND"
 
 
 def _normalize_label_name(label_name: object) -> str:
@@ -74,19 +81,32 @@ class CutoutRiggingSplitter:
                 "morphology_strength": ("INT", {"default": 0, "min": 0, "max": MAX_MORPHOLOGY_STRENGTH, "step": 1}),
                 "mask_threshold": ("FLOAT", {"default": DEFAULT_MASK_THRESHOLD, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "enable_pose_refinement": ("BOOLEAN", {"default": False}),
+                "human_parsing_backend": (_BACKEND_CONNECTOR_TYPE,),
             },
         }
 
-    def _part_masks_from_labels(self, label_masks: list[torch.Tensor], image: torch.Tensor) -> dict[str, torch.Tensor]:
-        if not hasattr(self.backend, "label_id_to_part"):
+    def _resolve_backend(self, backend: BaseHumanParsingBackend | None = None) -> BaseHumanParsingBackend:
+        active_backend = backend or self.backend
+        if not isinstance(active_backend, BaseHumanParsingBackend):
+            raise RuntimeError("human_parsing_backend input must provide a BaseHumanParsingBackend instance.")
+        return active_backend
+
+    def _part_masks_from_labels(
+        self,
+        label_masks: list[torch.Tensor],
+        image: torch.Tensor,
+        backend: BaseHumanParsingBackend | None = None,
+    ) -> dict[str, torch.Tensor]:
+        active_backend = self._resolve_backend(backend)
+        if not hasattr(active_backend, "label_id_to_part"):
             raise RuntimeError("Human parsing backend is missing the required 'label_id_to_part' mapping.")
-        if not isinstance(getattr(self.backend, "label_id_to_part"), dict):
+        if not isinstance(getattr(active_backend, "label_id_to_part"), dict):
             raise RuntimeError("Human parsing backend 'label_id_to_part' mapping must be a dictionary.")
 
         part_masks = {part: zeros_mask_like(image) for part in CANONICAL_PARTS}
         label_id_to_part = {
             int(label_id): str(part_name)
-            for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()
+            for label_id, part_name in getattr(active_backend, "label_id_to_part", {}).items()
             if str(part_name) in CANONICAL_PARTS or str(part_name) in _SPECIAL_LABEL_PARTS
         }
 
@@ -107,11 +127,16 @@ class CutoutRiggingSplitter:
 
         return part_masks
 
-    def _label_ids_for_names(self, *label_names: str) -> set[int]:
+    def _label_ids_for_names(
+        self,
+        *label_names: str,
+        backend: BaseHumanParsingBackend | None = None,
+    ) -> set[int]:
+        active_backend = self._resolve_backend(backend)
         normalized_targets = {_normalize_label_name(label_name) for label_name in label_names}
         return {
             int(label_id)
-            for label_id, label_name in getattr(self.backend, "id_to_label", {}).items()
+            for label_id, label_name in getattr(active_backend, "id_to_label", {}).items()
             if _normalize_label_name(label_name) in normalized_targets
         }
 
@@ -161,8 +186,9 @@ class CutoutRiggingSplitter:
         self,
         label_masks: list[torch.Tensor],
         part_masks: dict[str, torch.Tensor],
+        backend: BaseHumanParsingBackend | None = None,
     ) -> dict[str, torch.Tensor]:
-        face_label_ids = self._label_ids_for_names("face")
+        face_label_ids = self._label_ids_for_names("face", backend=backend)
         if not face_label_ids:
             return part_masks
 
@@ -259,9 +285,14 @@ class CutoutRiggingSplitter:
         if not isinstance(mask_threshold, (float, int)) or not 0.0 <= float(mask_threshold) <= 1.0:
             raise ValueError("mask_threshold must be a float in the range [0.0, 1.0].")
 
-    def _load_and_infer(self, image: torch.Tensor) -> list[object]:
+    def _load_and_infer(
+        self,
+        image: torch.Tensor,
+        backend: BaseHumanParsingBackend | None = None,
+    ) -> list[object]:
+        active_backend = self._resolve_backend(backend)
         try:
-            backend_load = self.backend.load
+            backend_load = active_backend.load
         except AttributeError as exc:
             raise RuntimeError("Human parsing backend is missing the required load(device: torch.device) method.") from exc
         if not callable(backend_load):
@@ -271,7 +302,7 @@ class CutoutRiggingSplitter:
         backend_load(image.device)
 
         try:
-            backend_infer = self.backend.infer
+            backend_infer = active_backend.infer
         except AttributeError as exc:
             raise RuntimeError(
                 "Human parsing backend is missing the required infer(image_bhwc: torch.Tensor) method."
@@ -346,15 +377,20 @@ class CutoutRiggingSplitter:
         morphology_strength: int = 0,
         mask_threshold: float = DEFAULT_MASK_THRESHOLD,
         enable_pose_refinement: bool = False,
+        human_parsing_backend: BaseHumanParsingBackend | None = None,
     ) -> tuple[torch.Tensor, ...]:
         """Split a ComfyUI IMAGE tensor into canonical cutout-rigging part images and masks."""
         image = ensure_image_bhwc(image)
         self._validate_parameters(feathering_amount, padding, crop_padding, morphology_strength, mask_threshold)
 
-        label_arrays = self._load_and_infer(image)
+        label_arrays = self._load_and_infer(image, backend=human_parsing_backend)
         label_masks = self._coerce_label_masks(label_arrays, image)
-        logical_part_masks = self._part_masks_from_labels(label_masks, image)
-        logical_part_masks = self._derive_illustration_part_masks(label_masks, logical_part_masks)
+        logical_part_masks = self._part_masks_from_labels(label_masks, image, backend=human_parsing_backend)
+        logical_part_masks = self._derive_illustration_part_masks(
+            label_masks,
+            logical_part_masks,
+            backend=human_parsing_backend,
+        )
         logical_part_masks = self._redistribute_garments_to_limbs(label_masks, logical_part_masks)
         logical_part_masks = select_primary_person_masks(logical_part_masks)
         logical_part_masks = self._maybe_refine_with_pose(image, logical_part_masks, enable_pose_refinement)
@@ -411,3 +447,41 @@ class CutoutRiggingSplitter:
             limbs_union_mask,
             torso_hole_mask,
         )
+
+
+class GoogleNanoBananaConnector:
+    CATEGORY = "CutoutAnimation/Connectors"
+    FUNCTION = "build_backend"
+    RETURN_TYPES = (_BACKEND_CONNECTOR_TYPE,)
+    RETURN_NAMES = ("human_parsing_backend",)
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict[str, dict[str, tuple]]:
+        return {
+            "required": {
+                "api_key": ("STRING", {"default": "", "multiline": False}),
+            },
+            "optional": {
+                "model_id": ("STRING", {"default": GOOGLE_NANO_BANANA_MODEL_ID, "multiline": False}),
+                "api_base": ("STRING", {"default": GOOGLE_NANO_BANANA_API_BASE, "multiline": False}),
+                "timeout_seconds": (
+                    "FLOAT",
+                    {"default": GOOGLE_NANO_BANANA_TIMEOUT_SECONDS, "min": 1.0, "max": 600.0, "step": 1.0},
+                ),
+            },
+        }
+
+    def build_backend(
+        self,
+        api_key: str,
+        model_id: str = GOOGLE_NANO_BANANA_MODEL_ID,
+        api_base: str = GOOGLE_NANO_BANANA_API_BASE,
+        timeout_seconds: float = GOOGLE_NANO_BANANA_TIMEOUT_SECONDS,
+    ) -> tuple[BaseHumanParsingBackend]:
+        backend = GoogleNanoBananaParsingBackend(
+            api_key=str(api_key).strip(),
+            model_id=str(model_id).strip() or GOOGLE_NANO_BANANA_MODEL_ID,
+            api_base=str(api_base).strip() or GOOGLE_NANO_BANANA_API_BASE,
+            timeout_seconds=float(timeout_seconds),
+        )
+        return (backend,)

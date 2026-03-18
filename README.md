@@ -5,6 +5,7 @@ Minimal ComfyUI custom node package for preparing cutout rigging layers from a s
 ## Included node
 
 - `CutoutRiggingSplitter`
+- `GoogleNanoBananaConnector`
 
 ## Current scope
 
@@ -71,7 +72,7 @@ After installing the dependencies, restart ComfyUI and confirm that `Cutout Rigg
 
 ## Optional Google Nano Banana / Gemini parsing backend
 
-For Google multimodal parsing, set:
+For Google multimodal parsing, either connect a `GoogleNanoBananaConnector` node into the `human_parsing_backend` input on `CutoutRiggingSplitter`, or set:
 
 ```bash
 export COMFY_EASYCUT_PARSING_BACKEND=google_nano_banana
@@ -85,6 +86,13 @@ export COMFY_EASYCUT_GOOGLE_MODEL=gemini-2.5-flash-image
 export COMFY_EASYCUT_GOOGLE_API_BASE=https://generativelanguage.googleapis.com/v1beta/models
 export COMFY_EASYCUT_GOOGLE_TIMEOUT_SECONDS=60
 ```
+
+The connector node exposes the same configuration directly in the ComfyUI graph:
+
+- `api_key`
+- `model_id`
+- `api_base`
+- `timeout_seconds`
 
 The Google image API is used for image recognition and structured region extraction. Because Nano Banana/Gemini does not directly return dense semantic masks, this backend asks the model for strict JSON segment regions and reconstructs the label mask locally from returned row spans and boxes before passing it through the standard rigging pipeline.
 
