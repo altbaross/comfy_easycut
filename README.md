@@ -51,11 +51,19 @@ When the parser produces multiple disconnected human regions, the node keeps onl
 
 ## Install
 
-Install the runtime dependencies from the repository root:
+For a manual ComfyUI install, clone this repository into `ComfyUI/custom_nodes/comfy_easycut`, then install the runtime dependencies with the same Python environment that launches ComfyUI:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+If you are using a portable ComfyUI build on Windows, run the command with ComfyUI's embedded Python from the cloned node directory, for example:
+
+```bash
+..\..\python_embeded\python.exe -m pip install -r requirements.txt
+```
+
+After installing the dependencies, restart ComfyUI and confirm that `Cutout Rigging Splitter` appears in the custom node list.
 
 ## Notes
 
