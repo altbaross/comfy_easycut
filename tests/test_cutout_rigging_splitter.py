@@ -70,6 +70,19 @@ class NonCallableLoadBackend(StubParsingBackend):
         self.load = None
 
 
+class MissingInferBackend(StubParsingBackend):
+    def __getattribute__(self, name: str) -> object:
+        if name == "infer":
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+class NonCallableInferBackend(StubParsingBackend):
+    def __init__(self, outputs: list[np.ndarray]) -> None:
+        super().__init__(outputs)
+        self.infer = None
+
+
 class LoadTrackingBackend(StubParsingBackend):
     def __init__(self, outputs: list[np.ndarray]) -> None:
         super().__init__(outputs)
@@ -238,6 +251,22 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         node = CutoutRiggingSplitter(backend=NonListParsingBackend(outputs))
 
         with self.assertRaisesRegex(RuntimeError, "must return a list"):
+            node.process(image, feathering_amount=0, padding=0)
+
+    def test_process_requires_backend_infer_method(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=MissingInferBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "infer\\(image_bhwc: torch\\.Tensor\\)"):
+            node.process(image, feathering_amount=0, padding=0)
+
+    def test_process_requires_callable_backend_infer_method(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=NonCallableInferBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "infer attribute must be callable"):
             node.process(image, feathering_amount=0, padding=0)
 
     def test_process_requires_backend_label_mapping(self) -> None:

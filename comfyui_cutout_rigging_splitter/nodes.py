@@ -104,7 +104,18 @@ class CutoutRiggingSplitter:
                 "Human parsing backend load attribute must be callable and accept a torch.device parameter."
             )
         backend_load(image.device)
-        label_arrays = self.backend.infer(image)
+        try:
+            backend_infer = self.backend.infer
+        except AttributeError:
+            raise RuntimeError(
+                "Human parsing backend is missing the required infer(image_bhwc: torch.Tensor) method."
+            )
+        if not callable(backend_infer):
+            raise RuntimeError(
+                "Human parsing backend infer attribute must be callable and accept an "
+                "image_bhwc: torch.Tensor parameter."
+            )
+        label_arrays = backend_infer(image)
         if not isinstance(label_arrays, list):
             raise RuntimeError("Human parsing backend must return a list of per-sample label masks.")
         if len(label_arrays) != image.shape[0]:
