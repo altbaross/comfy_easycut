@@ -482,7 +482,7 @@ class GoogleNanoBananaConnector:
         model_id: str = GOOGLE_NANO_BANANA_MODEL_ID,
         api_base: str = GOOGLE_NANO_BANANA_API_BASE,
         timeout_seconds: float = GOOGLE_NANO_BANANA_TIMEOUT_SECONDS,
-    ) -> tuple[BaseHumanParsingBackend]:
+    ) -> tuple[BaseHumanParsingBackend,]:
         normalized_api_key = _coerce_string_input(api_key)
         if not normalized_api_key:
             raise ValueError("api_key must not be empty.")
