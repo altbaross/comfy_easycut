@@ -181,10 +181,10 @@ class GoogleNanoBananaParsingBackend(BaseHumanParsingBackend):
             "Return strict JSON only, with no markdown fences.\n"
             "Use this schema:\n"
             "{"
-            '"analysis": {"subject_summary": string, "visual_style": string, "primary_character_count": integer}, '
+            '"analysis": {"subject_summary": "string value", "visual_style": "string value", "primary_character_count": 1}, '
             '"segments": ['
-            '{"label_id": integer, "label": string, "rows": [{"y": integer, "x0": integer, "x1": integer}], '
-            '"boxes": [{"y0": integer, "x0": integer, "y1": integer, "x1": integer}]}'
+            '{"label_id": 11, "label": "face", "rows": [{"y": 0, "x0": 0, "x1": 1}], '
+            '"boxes": [{"y0": 0, "x0": 0, "y1": 1, "x1": 1}]}'
             "]}"
             "\n"
             "Prefer dense row spans in 'rows' for tight segmentation. Use 'boxes' only when row spans are impractical.\n"

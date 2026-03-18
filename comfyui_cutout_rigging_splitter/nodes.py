@@ -141,9 +141,10 @@ class CutoutRiggingSplitter:
         # band with a small center gap for the nose bridge. These proportional
         # windows intentionally bias toward that anime/cutout layout.
         eye_band_y0 = y0 + max(0, int(round(height * _EYE_BAND_TOP_RATIO)))
+        min_eye_band_height = eye_band_y0 - y0 + 1
         # Always keep at least one scanline in the eye band even for short face
         # masks so that small illustration faces can still produce an eye layer.
-        eye_band_y1 = min(y1, y0 + max(int(round(height * _EYE_BAND_BOTTOM_RATIO)), eye_band_y0 - y0 + 1))
+        eye_band_y1 = min(y1, y0 + max(int(round(height * _EYE_BAND_BOTTOM_RATIO)), min_eye_band_height))
         left_eye_x0 = x0 + max(0, int(round(width * _LEFT_EYE_X0_RATIO)))
         left_eye_x1 = min(x1, x0 + max(int(round(width * _LEFT_EYE_X1_RATIO)), left_eye_x0 - x0 + 1))
         # The right-eye window is clamped to start after the computed left-eye
