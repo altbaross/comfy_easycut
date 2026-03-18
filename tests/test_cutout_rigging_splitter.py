@@ -100,6 +100,21 @@ class LoadTrackingBackend(StubParsingBackend):
         return self.outputs
 
 
+class ClothingParsingBackend(BaseHumanParsingBackend):
+    def __init__(self, outputs: list[np.ndarray]) -> None:
+        super().__init__()
+        self.outputs = outputs
+        self.id_to_label = dict(DEFAULT_MODEL_ID_TO_LABEL)
+        self.label_id_to_part = dict(DEFAULT_MODEL_LABEL_ID_TO_PART)
+
+    def load(self, device: torch.device) -> None:
+        del device
+
+    def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:
+        self.load(image_bhwc.device)
+        return self.outputs
+
+
 class TrackingPoseRefiner(BasePoseRefinementBackend):
     def __init__(self) -> None:
         self.loaded_device: torch.device | None = None
@@ -136,6 +151,9 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[11], "face")
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[14], "left-arm")
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[15], "right-arm")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[5], "torso")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[6], "pants")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[8], "torso")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[11], "head")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[14], "arm_left")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[15], "arm_right")
@@ -259,6 +277,84 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(float(torso_mask[5, 4]), 0.0)
         self.assertEqual(float(head_mask[0, 1]), 1.0)
         self.assertGreater(float(torso_mask.sum()), 0.0)
+
+    def test_process_splits_pants_label_between_left_and_right_legs_for_each_sample(self) -> None:
+        image = torch.ones((2, 4, 6, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 6, 6, 6, 6, 0],
+                    [0, 6, 6, 6, 6, 0],
+                    [0, 0, 0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            ),
+            np.array(
+                [
+                    [0, 0, 0, 0, 0, 0],
+                    [6, 6, 6, 0, 0, 0],
+                    [6, 6, 6, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            ),
+        ]
+        node = CutoutRiggingSplitter(backend=ClothingParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        leg_left_mask = result[9]
+        leg_right_mask = result[11]
+        self.assertTrue(torch.equal(leg_left_mask[0, 1], torch.tensor([0.0, 1.0, 1.0, 0.0, 0.0, 0.0])))
+        self.assertTrue(torch.equal(leg_right_mask[0, 1], torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 0.0])))
+        self.assertTrue(torch.equal(leg_left_mask[1, 1], torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])))
+        self.assertTrue(torch.equal(leg_right_mask[1, 1], torch.tensor([0.0, 0.0, 1.0, 0.0, 0.0, 0.0])))
+
+    def test_process_maps_skirt_and_belt_labels_to_torso(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 0, 0],
+                    [0, 5, 8, 0],
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=ClothingParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        torso_mask = result[3][0]
+        self.assertEqual(float(torso_mask[1, 1]), 1.0)
+        self.assertEqual(float(torso_mask[1, 2]), 1.0)
+
+    def test_process_redistributes_upper_clothes_touching_arm_to_arm_mask(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 0, 0],
+                    [0, 14, 4, 0],
+                    [0, 0, 4, 0],
+                    [0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=ClothingParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        arm_left_mask = result[5][0]
+        torso_mask = result[3][0]
+        self.assertEqual(float(arm_left_mask.sum()), 3.0)
+        self.assertEqual(float(arm_left_mask[1, 2]), 1.0)
+        self.assertEqual(float(arm_left_mask[2, 2]), 1.0)
+        self.assertEqual(float(torso_mask.sum()), 0.0)
 
     def test_torso_hole_mask_is_conservative_overlap_near_torso(self) -> None:
         image = torch.ones((1, 6, 6, 3), dtype=torch.float32)
