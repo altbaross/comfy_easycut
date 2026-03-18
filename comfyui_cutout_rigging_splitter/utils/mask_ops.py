@@ -85,9 +85,9 @@ def split_mask_left_right(mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
     min_x = int(nonzero[:, 1].min().item())
     max_x = int(nonzero[:, 1].max().item())
     midpoint = (min_x + max_x) / 2.0
-    column_indices = torch.arange(mask.shape[1], device=mask.device, dtype=torch.float32).unsqueeze(0)
-    left_mask = (binary & (column_indices <= midpoint)).to(torch.float32)
-    right_mask = (binary & (column_indices > midpoint)).to(torch.float32)
+    column_indices = torch.arange(mask.shape[1], device=mask.device, dtype=torch.float32)
+    left_mask = (binary & (column_indices <= midpoint).unsqueeze(0)).to(torch.float32)
+    right_mask = (binary & (column_indices > midpoint).unsqueeze(0)).to(torch.float32)
     return left_mask, right_mask
 
 

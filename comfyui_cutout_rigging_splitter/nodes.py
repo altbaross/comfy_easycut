@@ -27,6 +27,9 @@ from .utils import (
     zeros_mask_like,
 )
 
+_SPECIAL_LABEL_PARTS = frozenset({"pants"})
+_UPPER_CLOTHES_LABEL_ID = 4
+
 
 class CutoutRiggingSplitter:
     CATEGORY = "CutoutAnimation/Processing"
@@ -67,7 +70,11 @@ class CutoutRiggingSplitter:
             raise RuntimeError("Human parsing backend 'label_id_to_part' mapping must be a dictionary.")
 
         part_masks = {part: zeros_mask_like(image) for part in CANONICAL_PARTS}
-        label_id_to_part = {int(label_id): str(part_name) for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()}
+        label_id_to_part = {
+            int(label_id): str(part_name)
+            for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()
+            if str(part_name) in CANONICAL_PARTS or str(part_name) in _SPECIAL_LABEL_PARTS
+        }
 
         for batch_index, label_mask in enumerate(label_masks):
             sample_mask = label_mask.to(device=image.device, dtype=torch.int64)
@@ -90,7 +97,7 @@ class CutoutRiggingSplitter:
         self,
         label_masks: list[torch.Tensor],
         part_masks: dict[str, torch.Tensor],
-        garment_label_id: int = 4,
+        garment_label_id: int = _UPPER_CLOTHES_LABEL_ID,
         expansion_radius: int = 1,
     ) -> dict[str, torch.Tensor]:
         torso_masks = part_masks["torso"]
