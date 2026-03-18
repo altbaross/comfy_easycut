@@ -17,9 +17,19 @@ This implementation keeps the default output schema stable for ComfyUI:
 - `limbs_union_mask`
 - `torso_hole_mask`
 
-The node uses a single lazy-loaded human parsing backend interface. The backend supports only the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the optional dependency or model is unavailable.
+The node uses a single lazy-loaded human parsing backend interface. The backend supports only the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the dependency or model is unavailable.
 
 `feathering_amount` softly feathers returned part masks and part images for display, while `padding` expands the torso region used for the conservative `torso_hole_mask`.
+
+## Install
+
+Install the runtime dependencies from the repository root:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+This keeps the node importable in ComfyUI with the standard tensor dependencies (`numpy`, `torch`) and provides the single supported parsing backend (`transformers` + `Pillow`) when real human parsing inference is needed.
 
 ## Notes
 
