@@ -8,6 +8,8 @@ Minimal ComfyUI custom node package for preparing full-canvas cutout rigging lay
 
 ## Current scope
 
+Current milestone level: stable full-canvas outputs through the initial feathering stage. Optional crop outputs, alternate parsing backends, and pose-assisted refinement are intentionally not implemented yet.
+
 This implementation keeps the default output schema stable for ComfyUI:
 
 - full-canvas RGB image per canonical part
@@ -15,7 +17,7 @@ This implementation keeps the default output schema stable for ComfyUI:
 - `limbs_union_mask`
 - `torso_hole_mask`
 
-The node uses a single lazy-loaded human parsing backend interface. The default backend expects an optional Hugging Face semantic segmentation model with an explicit verified label mapping for `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the optional dependency or model is unavailable.
+The node uses a single lazy-loaded human parsing backend interface. The backend supports only the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the optional dependency or model is unavailable.
 
 `feathering_amount` softly feathers returned part masks and part images for display, while `padding` expands the torso region used for the conservative `torso_hole_mask`.
 

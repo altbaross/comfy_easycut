@@ -10,6 +10,7 @@ from comfyui_cutout_rigging_splitter.backends.base import BaseHumanParsingBacken
 from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import (
     DEFAULT_MODEL_ID_TO_LABEL,
     DEFAULT_MODEL_LABEL_ID_TO_PART,
+    TransformersHumanParsingBackend,
 )
 from comfyui_cutout_rigging_splitter.nodes import CutoutRiggingSplitter
 
@@ -139,6 +140,12 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "invalid label mask shape"):
             node.process(image, feathering_amount=0, padding=0)
+
+    def test_backend_rejects_unverified_model_id(self) -> None:
+        backend = TransformersHumanParsingBackend(model_id="custom/model")
+
+        with self.assertRaisesRegex(RuntimeError, "currently supports only the verified human parsing model"):
+            backend.load(torch.device("cpu"))
 
 
 if __name__ == "__main__":
