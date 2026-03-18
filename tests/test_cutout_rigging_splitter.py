@@ -57,6 +57,20 @@ class MissingMappingBackend(StubParsingBackend):
         del self.label_id_to_part
 
 
+class LoadTrackingBackend(StubParsingBackend):
+    def __init__(self, outputs: list[np.ndarray]) -> None:
+        super().__init__(outputs)
+        self.loaded_device: torch.device | None = None
+
+    def load(self, device: torch.device) -> None:
+        self.loaded_device = device
+
+    def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:
+        if self.loaded_device != image_bhwc.device:
+            raise RuntimeError("backend load() must be called with the image device before infer().")
+        return self.outputs
+
+
 class CutoutRiggingSplitterTests(unittest.TestCase):
     def test_default_backend_uses_explicit_verified_label_constants(self) -> None:
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[11], "face")
@@ -164,6 +178,17 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
             node.process(image, feathering_amount=-1, padding=0)
         with self.assertRaisesRegex(ValueError, "padding"):
             node.process(image, feathering_amount=0, padding=129)
+
+    def test_process_loads_backend_on_image_device_before_infer(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        backend = LoadTrackingBackend(outputs)
+        node = CutoutRiggingSplitter(backend=backend)
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        self.assertEqual(len(result), 14)
+        self.assertEqual(backend.loaded_device, image.device)
 
     def test_process_requires_backend_label_mask_list(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
