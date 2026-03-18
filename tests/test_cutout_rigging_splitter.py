@@ -57,12 +57,27 @@ class MissingMappingBackend(StubParsingBackend):
         del self.label_id_to_part
 
 
+class MissingLoadBackend(StubParsingBackend):
+    def __getattribute__(self, name: str) -> object:
+        if name == "load":
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+class NonCallableLoadBackend(StubParsingBackend):
+    def __init__(self, outputs: list[np.ndarray]) -> None:
+        super().__init__(outputs)
+        self.load = None
+
+
 class LoadTrackingBackend(StubParsingBackend):
     def __init__(self, outputs: list[np.ndarray]) -> None:
         super().__init__(outputs)
         self.loaded_device: torch.device | None = None
 
     def load(self, device: torch.device) -> None:
+        if not isinstance(device, torch.device):
+            raise RuntimeError("load() must receive a torch.device instance.")
         self.loaded_device = device
 
     def infer(self, image_bhwc: torch.Tensor) -> list[np.ndarray]:
@@ -189,6 +204,22 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         self.assertEqual(len(result), 14)
         self.assertEqual(backend.loaded_device, image.device)
+
+    def test_process_requires_backend_load_method(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=MissingLoadBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "load\\(device: torch\\.device\\)"):
+            node.process(image, feathering_amount=0, padding=0)
+
+    def test_process_requires_callable_backend_load_method(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=NonCallableLoadBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "callable"):
+            node.process(image, feathering_amount=0, padding=0)
 
     def test_process_requires_backend_label_mask_list(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
