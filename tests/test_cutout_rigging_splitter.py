@@ -365,6 +365,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(float(hair_mask.sum()), 8.0)
         self.assertGreater(float(eyes_mask.sum()), 0.0)
         self.assertEqual(float(eyes_mask[:3].sum()), 0.0)
+        # With a 4-pixel-wide face band, the heuristic keeps a one-pixel center
+        # gap, so the synthetic illustration case produces exactly 3 eye pixels.
         self.assertEqual(float(eyes_mask[3, 2:6].sum()), 3.0)
         self.assertEqual(float(eyes_mask[:, :2].sum()), 0.0)
         self.assertEqual(float(eyes_mask[:, 6:].sum()), 0.0)
