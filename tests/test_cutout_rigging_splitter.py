@@ -87,7 +87,7 @@ class LoadTrackingBackend(StubParsingBackend):
 
 
 class CutoutRiggingSplitterTests(unittest.TestCase):
-    def test_process_returns_zero_outputs_for_completely_missing_parts(self) -> None:
+    def test_process_returns_zeros_when_no_parts_detected(self) -> None:
         image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
         outputs = [np.zeros((3, 2), dtype=np.int32)]
         node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
