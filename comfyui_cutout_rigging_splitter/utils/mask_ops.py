@@ -6,6 +6,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+_EIGHT_CONNECTIVITY = (
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+)
+
 
 def dilate_mask(mask: torch.Tensor, radius: int) -> torch.Tensor:
     if radius <= 0:
@@ -53,23 +64,23 @@ def make_torso_hole_mask(
     if float(torso_mask.max()) == 0.0 or float(limbs_union_mask.max()) == 0.0:
         return torch.zeros_like(torso_mask)
     torso_context = dilate_mask(torso_mask, max(padding, 1))
-    limb_context = dilate_mask(limbs_union_mask, min(max(refinement_radius, 0), 1))
+    limb_context_radius = refinement_radius if refinement_radius > 0 else 0
+    limb_context = dilate_mask(limbs_union_mask, limb_context_radius)
     conservative_overlap = (torso_context * limb_context).clamp(0.0, 1.0)
     if refinement_radius > 0:
-        conservative_overlap = refine_logical_mask(conservative_overlap, min(refinement_radius, 1))
+        conservative_overlap = refine_logical_mask(conservative_overlap, refinement_radius)
     return conservative_overlap.clamp(0.0, 1.0)
 
 
 def _largest_connected_component_numpy(mask: np.ndarray) -> np.ndarray:
     if mask.ndim != 2:
-        raise ValueError("largest connected component expects a [H, W] mask.")
+        raise ValueError("largest_connected_component expects a [H, W] mask.")
     if not mask.any():
         return mask
 
     height, width = mask.shape
     visited = np.zeros_like(mask, dtype=bool)
     best_component: list[tuple[int, int]] = []
-    neighbors = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
     for start_y, start_x in np.argwhere(mask):
         if visited[start_y, start_x]:
@@ -81,7 +92,7 @@ def _largest_connected_component_numpy(mask: np.ndarray) -> np.ndarray:
         while queue:
             y, x = queue.popleft()
             component.append((y, x))
-            for delta_y, delta_x in neighbors:
+            for delta_y, delta_x in _EIGHT_CONNECTIVITY:
                 next_y = y + delta_y
                 next_x = x + delta_x
                 if next_y < 0 or next_y >= height or next_x < 0 or next_x >= width:
@@ -116,7 +127,8 @@ def select_primary_person_masks(part_masks: dict[str, torch.Tensor]) -> dict[str
     canonical_union = None
     for mask in part_masks.values():
         canonical_union = mask if canonical_union is None else torch.maximum(canonical_union, mask)
-    assert canonical_union is not None
+    if canonical_union is None:
+        raise RuntimeError("select_primary_person_masks requires at least one canonical part mask.")
 
     primary_seed = keep_largest_connected_component(canonical_union)
     primary_mask = dilate_mask(primary_seed, 1)

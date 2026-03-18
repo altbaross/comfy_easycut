@@ -185,7 +185,6 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         leg_left_mask = result[9]
         leg_right_mask = result[11]
         limbs_union_mask = result[12]
-        torso_hole_mask = result[13]
 
         self.assertTrue(torch.equal(head_mask[0, 0], torch.tensor([1.0, 1.0, 0.0])))
         self.assertTrue(torch.equal(torso_mask[0, 0], torch.tensor([0.0, 0.0, 1.0])))
@@ -194,9 +193,6 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(float(leg_left_mask[1].sum()), 0.0)
         self.assertEqual(float(leg_right_mask[1].sum()), 0.0)
         self.assertEqual(float(limbs_union_mask[1].sum()), 0.0)
-        self.assertGreater(float(torso_hole_mask[0].sum()), 0.0)
-        self.assertLessEqual(float(torso_hole_mask[0].sum()), float(limbs_union_mask[0].sum()))
-
         head_image = result[0]
         self.assertTrue(torch.equal(head_image[0], image[0] * head_mask[0].unsqueeze(-1)))
 

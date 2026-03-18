@@ -181,12 +181,16 @@ class CutoutRiggingSplitter:
         cropped_images: dict[str, torch.Tensor] = {}
         cropped_masks: dict[str, torch.Tensor] = {}
         for part_name in CANONICAL_PARTS:
-            bbox = compute_mask_bbox(logical_part_masks[part_name][0], threshold=mask_threshold, padding=crop_padding)
-            self.last_crop_boxes[part_name] = bbox
+            part_bbox = compute_mask_bbox(
+                logical_part_masks[part_name][0],
+                threshold=mask_threshold,
+                padding=crop_padding,
+            )
+            self.last_crop_boxes[part_name] = part_bbox
             cropped_images[part_name], cropped_masks[part_name] = crop_part_image_and_mask(
                 part_images[part_name],
                 part_masks[part_name],
-                bbox,
+                part_bbox,
             )
 
         limbs_bbox = compute_mask_bbox(limbs_union_mask[0], threshold=mask_threshold, padding=crop_padding)
