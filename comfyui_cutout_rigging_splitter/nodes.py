@@ -15,6 +15,7 @@ from .constants import (
 from .utils import (
     compute_mask_bbox,
     crop_part_image_and_mask,
+    dilate_mask,
     ensure_image_bhwc,
     feather_mask,
     make_limbs_union_mask,
@@ -22,6 +23,7 @@ from .utils import (
     make_torso_hole_mask,
     refine_logical_mask,
     select_primary_person_masks,
+    split_mask_left_right,
     zeros_mask_like,
 )
 
@@ -65,11 +67,7 @@ class CutoutRiggingSplitter:
             raise RuntimeError("Human parsing backend 'label_id_to_part' mapping must be a dictionary.")
 
         part_masks = {part: zeros_mask_like(image) for part in CANONICAL_PARTS}
-        label_id_to_part = {
-            int(label_id): part_name
-            for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()
-            if part_name in CANONICAL_PARTS
-        }
+        label_id_to_part = {int(label_id): str(part_name) for label_id, part_name in getattr(self.backend, "label_id_to_part", {}).items()}
 
         for batch_index, label_mask in enumerate(label_masks):
             sample_mask = label_mask.to(device=image.device, dtype=torch.int64)
@@ -77,8 +75,38 @@ class CutoutRiggingSplitter:
                 sample_part_mask = (sample_mask == label_id).to(torch.float32)
                 if float(sample_part_mask.max()) == 0.0:
                     continue
+                if part_name == "pants":
+                    leg_left_mask, leg_right_mask = split_mask_left_right(sample_part_mask)
+                    part_masks["leg_left"][batch_index] = torch.maximum(part_masks["leg_left"][batch_index], leg_left_mask)
+                    part_masks["leg_right"][batch_index] = torch.maximum(part_masks["leg_right"][batch_index], leg_right_mask)
+                    continue
+                if part_name not in CANONICAL_PARTS:
+                    continue
                 part_masks[part_name][batch_index] = torch.maximum(part_masks[part_name][batch_index], sample_part_mask)
 
+        return part_masks
+
+    def _redistribute_garments_to_limbs(
+        self,
+        label_masks: list[torch.Tensor],
+        part_masks: dict[str, torch.Tensor],
+        garment_label_id: int = 4,
+        expansion_radius: int = 1,
+    ) -> dict[str, torch.Tensor]:
+        torso_masks = part_masks["torso"]
+        for batch_index, label_mask in enumerate(label_masks):
+            garment_mask = (label_mask.to(device=torso_masks.device, dtype=torch.int64) == garment_label_id).to(torch.float32).unsqueeze(0)
+            if float(garment_mask.max()) == 0.0:
+                continue
+            for arm_key in ("arm_left", "arm_right"):
+                arm_mask = part_masks[arm_key][batch_index].unsqueeze(0)
+                if float(arm_mask.max()) == 0.0:
+                    continue
+                sleeve_region = (dilate_mask(arm_mask, expansion_radius) * garment_mask).clamp(0.0, 1.0).squeeze(0)
+                if float(sleeve_region.max()) == 0.0:
+                    continue
+                part_masks[arm_key][batch_index] = torch.maximum(part_masks[arm_key][batch_index], sleeve_region)
+                part_masks["torso"][batch_index] = (part_masks["torso"][batch_index] * (1.0 - sleeve_region)).clamp(0.0, 1.0)
         return part_masks
 
     def _coerce_label_masks(self, label_arrays: list[object], image: torch.Tensor) -> list[torch.Tensor]:
@@ -227,6 +255,7 @@ class CutoutRiggingSplitter:
         label_arrays = self._load_and_infer(image)
         label_masks = self._coerce_label_masks(label_arrays, image)
         logical_part_masks = self._part_masks_from_labels(label_masks, image)
+        logical_part_masks = self._redistribute_garments_to_limbs(label_masks, logical_part_masks)
         logical_part_masks = select_primary_person_masks(logical_part_masks)
         logical_part_masks = self._maybe_refine_with_pose(image, logical_part_masks, enable_pose_refinement)
         logical_part_masks = {

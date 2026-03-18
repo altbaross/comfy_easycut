@@ -10,6 +10,7 @@ from .mask_ops import (
     make_torso_hole_mask,
     refine_logical_mask,
     select_primary_person_masks,
+    split_mask_left_right,
 )
 from .tensor_ops import ensure_image_bhwc, zeros_image_like, zeros_mask_like
 
@@ -30,6 +31,7 @@ __all__ = [
     "make_torso_hole_mask",
     "refine_logical_mask",
     "select_primary_person_masks",
+    "split_mask_left_right",
     "zeros_image_like",
     "zeros_mask_like",
 ]

@@ -72,7 +72,26 @@ def make_torso_hole_mask(
     return conservative_overlap.clamp(0.0, 1.0)
 
 
-def _largest_connected_component_numpy(mask: np.ndarray) -> np.ndarray:
+def split_mask_left_right(mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    if mask.ndim != 2:
+        raise ValueError("split_mask_left_right expects a [H, W] mask.")
+
+    binary = mask > 0
+    if not bool(binary.any()):
+        empty = torch.zeros_like(mask, dtype=torch.float32)
+        return empty, empty
+
+    nonzero = torch.nonzero(binary, as_tuple=False)
+    min_x = int(nonzero[:, 1].min().item())
+    max_x = int(nonzero[:, 1].max().item())
+    midpoint = (min_x + max_x) / 2.0
+    column_indices = torch.arange(mask.shape[1], device=mask.device, dtype=torch.float32).unsqueeze(0)
+    left_mask = (binary & (column_indices <= midpoint)).to(torch.float32)
+    right_mask = (binary & (column_indices > midpoint)).to(torch.float32)
+    return left_mask, right_mask
+
+
+def _largest_connected_component_bfs(mask: np.ndarray) -> np.ndarray:
     if mask.ndim != 2:
         raise ValueError("largest_connected_component expects a [H, W] mask.")
     if not mask.any():
@@ -109,6 +128,25 @@ def _largest_connected_component_numpy(mask: np.ndarray) -> np.ndarray:
     for y, x in best_component:
         largest[y, x] = True
     return largest
+
+
+def _largest_connected_component_numpy(mask: np.ndarray) -> np.ndarray:
+    if mask.ndim != 2:
+        raise ValueError("largest_connected_component expects a [H, W] mask.")
+    if not mask.any():
+        return mask
+
+    try:
+        from scipy import ndimage
+    except (ImportError, ModuleNotFoundError):
+        return _largest_connected_component_bfs(mask)
+
+    labeled, num_features = ndimage.label(mask, structure=np.ones((3, 3), dtype=np.int8))
+    if num_features == 0:
+        return np.zeros_like(mask, dtype=bool)
+    component_sizes = np.bincount(labeled.ravel())[1:]
+    largest_id = int(component_sizes.argmax()) + 1
+    return labeled == largest_id
 
 
 def keep_largest_connected_component(mask: torch.Tensor) -> torch.Tensor:

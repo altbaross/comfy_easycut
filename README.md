@@ -28,7 +28,7 @@ The node groups backend labels into these canonical rigging parts:
 - `leg_left`
 - `leg_right`
 
-The backend-specific mapping is explicit and verified. Hair maps to `head`, dress/scarf map to `torso`, and left/right shoes map to the corresponding leg outputs. Missing parts return zero images and zero masks instead of raising errors.
+The backend-specific mapping is explicit and verified. Hair maps to `head`, dress/scarf/skirt/belt map to `torso`, left/right shoes map to the corresponding leg outputs, and the shared `pants` label is split across `leg_left` and `leg_right` by mask midpoint. Missing parts return zero images and zero masks instead of raising errors.
 
 ### Optional controls
 
@@ -48,6 +48,8 @@ If `crop_mode` is enabled for `B>1`, the node safely falls back to full-canvas o
 ### Multiple people
 
 When the parser produces multiple disconnected human regions, the node keeps only the largest connected canonical-part component so the outputs stay focused on the primary visible subject.
+
+Long-sleeve `upper-clothes` pixels that touch visible arm regions are also reassigned from `torso` into the corresponding arm mask before primary-person selection, which helps sleeves stay attached to arm outputs instead of being lost to the torso cut.
 
 ## Install
 
