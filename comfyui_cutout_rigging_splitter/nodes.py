@@ -112,7 +112,8 @@ class CutoutRiggingSplitter:
             )
         if not callable(backend_infer):
             raise RuntimeError(
-                "Human parsing backend infer attribute must be callable and accept a ComfyUI IMAGE tensor."
+                "Human parsing backend infer attribute must be callable and accept an "
+                "image_bhwc: torch.Tensor parameter."
             )
         label_arrays = backend_infer(image)
         if not isinstance(label_arrays, list):
