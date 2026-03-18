@@ -7,6 +7,7 @@ import torch
 
 from comfyui_cutout_rigging_splitter import NODE_CLASS_MAPPINGS
 from comfyui_cutout_rigging_splitter.backends.base import BaseHumanParsingBackend
+from comfyui_cutout_rigging_splitter.backends.pose_backend_optional import BasePoseRefinementBackend
 from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import (
     DEFAULT_MODEL_ID_TO_LABEL,
     DEFAULT_MODEL_LABEL_ID_TO_PART,
@@ -99,6 +100,26 @@ class LoadTrackingBackend(StubParsingBackend):
         return self.outputs
 
 
+class TrackingPoseRefiner(BasePoseRefinementBackend):
+    def __init__(self) -> None:
+        self.loaded_device: torch.device | None = None
+        self.called = False
+
+    def load(self, device: torch.device) -> None:
+        self.loaded_device = device
+
+    def refine(
+        self,
+        image_bhwc: torch.Tensor,
+        part_masks: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        del image_bhwc
+        self.called = True
+        refined = dict(part_masks)
+        refined["head"] = torch.zeros_like(refined["head"])
+        return refined
+
+
 class CutoutRiggingSplitterTests(unittest.TestCase):
     def test_process_returns_zeros_when_no_parts_detected(self) -> None:
         image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
@@ -118,6 +139,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[11], "head")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[14], "arm_left")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[15], "arm_right")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[9], "leg_left")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[10], "leg_right")
 
     def test_node_registration_exports_expected_class(self) -> None:
         self.assertIn("CutoutRiggingSplitter", NODE_CLASS_MAPPINGS)
@@ -162,7 +185,6 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         leg_left_mask = result[9]
         leg_right_mask = result[11]
         limbs_union_mask = result[12]
-        torso_hole_mask = result[13]
 
         self.assertTrue(torch.equal(head_mask[0, 0], torch.tensor([1.0, 1.0, 0.0])))
         self.assertTrue(torch.equal(torso_mask[0, 0], torch.tensor([0.0, 0.0, 1.0])))
@@ -171,10 +193,98 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(float(leg_left_mask[1].sum()), 0.0)
         self.assertEqual(float(leg_right_mask[1].sum()), 0.0)
         self.assertEqual(float(limbs_union_mask[1].sum()), 0.0)
-        self.assertEqual(float(torso_hole_mask[0].sum()), 0.0)
-
         head_image = result[0]
         self.assertTrue(torch.equal(head_image[0], image[0] * head_mask[0].unsqueeze(-1)))
+
+    def test_crop_mode_returns_per_part_crops_for_single_image(self) -> None:
+        image = torch.arange(1 * 6 * 6 * 3, dtype=torch.float32).reshape(1, 6, 6, 3) / 255.0
+        outputs = [
+            np.array(
+                [
+                    [1, 1, 0, 0, 0, 0],
+                    [0, 1, 0, 0, 0, 0],
+                    [0, 3, 2, 2, 0, 0],
+                    [0, 0, 2, 2, 0, 0],
+                    [5, 0, 0, 0, 6, 0],
+                    [5, 0, 0, 0, 6, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0, crop_mode=True, crop_padding=0)
+
+        self.assertEqual(result[0].shape, (1, 2, 2, 3))
+        self.assertEqual(result[1].shape, (1, 2, 2))
+        self.assertEqual(result[2].shape, (1, 2, 2, 3))
+        self.assertEqual(result[7].shape, (1, 1, 1))
+        self.assertEqual(float(result[7].sum()), 0.0)
+        self.assertEqual(node.last_crop_boxes["head"], (0, 2, 0, 2))
+        self.assertIsNone(node.last_crop_boxes["arm_right"])
+
+    def test_crop_mode_falls_back_to_full_canvas_for_batch(self) -> None:
+        image = torch.ones((2, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((4, 4), dtype=np.int32), np.zeros((4, 4), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0, crop_mode=True, crop_padding=0)
+
+        self.assertEqual(result[0].shape, (2, 4, 4, 3))
+        self.assertEqual(result[1].shape, (2, 4, 4))
+        self.assertEqual(node.last_crop_boxes, {})
+
+    def test_primary_person_selection_keeps_largest_visible_component(self) -> None:
+        image = torch.ones((1, 6, 6, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 1, 1, 0, 0, 0],
+                    [0, 2, 2, 0, 0, 0],
+                    [0, 2, 2, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 1, 0],
+                    [0, 0, 0, 0, 2, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        head_mask = result[1][0]
+        torso_mask = result[3][0]
+        self.assertEqual(float(head_mask[4, 4]), 0.0)
+        self.assertEqual(float(torso_mask[5, 4]), 0.0)
+        self.assertEqual(float(head_mask[0, 1]), 1.0)
+        self.assertGreater(float(torso_mask.sum()), 0.0)
+
+    def test_torso_hole_mask_is_conservative_overlap_near_torso(self) -> None:
+        image = torch.ones((1, 6, 6, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                    [3, 3, 2, 2, 0, 0],
+                    [0, 0, 2, 2, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        limbs_union_mask = result[12][0]
+        torso_hole_mask = result[13][0]
+        self.assertEqual(float(limbs_union_mask.sum()), 2.0)
+        self.assertEqual(float(torso_hole_mask.sum()), 1.0)
+        self.assertEqual(float(torso_hole_mask[2, 1]), 1.0)
+        self.assertEqual(float(torso_hole_mask[2, 0]), 0.0)
 
     def test_feathering_softens_output_masks_without_breaking_shapes(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
@@ -198,6 +308,18 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertGreater(float(head_mask[0, 1, 0]), 0.0)
         self.assertLess(float(head_mask[0, 1, 0]), 1.0)
 
+    def test_pose_refinement_hook_is_optional_and_applied_when_enabled(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.ones((4, 4), dtype=np.int32)]
+        pose_refiner = TrackingPoseRefiner()
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs), pose_refiner=pose_refiner)
+
+        result = node.process(image, feathering_amount=0, padding=0, enable_pose_refinement=True)
+
+        self.assertTrue(pose_refiner.called)
+        self.assertEqual(pose_refiner.loaded_device, image.device)
+        self.assertEqual(float(result[1].sum()), 0.0)
+
     def test_process_raises_clear_error_for_invalid_backend_mask_shape(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
         outputs = [np.zeros((2, 2), dtype=np.int32)]
@@ -211,12 +333,25 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         outputs = [np.zeros((4, 4), dtype=np.int32)]
         node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
 
-        result = node.process(image, feathering_amount=16, padding=128)
+        result = node.process(
+            image,
+            feathering_amount=16,
+            padding=128,
+            crop_padding=128,
+            morphology_strength=8,
+            mask_threshold=1.0,
+        )
         self.assertEqual(len(result), 14)
         with self.assertRaisesRegex(ValueError, "feathering_amount"):
             node.process(image, feathering_amount=-1, padding=0)
         with self.assertRaisesRegex(ValueError, "padding"):
             node.process(image, feathering_amount=0, padding=129)
+        with self.assertRaisesRegex(ValueError, "crop_padding"):
+            node.process(image, feathering_amount=0, padding=0, crop_padding=129)
+        with self.assertRaisesRegex(ValueError, "morphology_strength"):
+            node.process(image, feathering_amount=0, padding=0, morphology_strength=9)
+        with self.assertRaisesRegex(ValueError, "mask_threshold"):
+            node.process(image, feathering_amount=0, padding=0, mask_threshold=1.1)
 
     def test_process_loads_backend_on_image_device_before_infer(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
