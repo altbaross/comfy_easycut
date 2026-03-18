@@ -157,16 +157,16 @@ class GoogleNanoBananaParsingBackend(BaseHumanParsingBackend):
                 return response.read().decode("utf-8")
         except urllib_error.HTTPError as exc:  # pragma: no cover - depends on remote API
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Google Nano Banana API request failed with status {exc.code}: {detail}") from exc
+            raise RuntimeError(f"Google Gemini API request failed with status {exc.code}: {detail}") from exc
         except urllib_error.URLError as exc:  # pragma: no cover - depends on network
-            raise RuntimeError(f"Failed to reach Google Nano Banana API: {exc.reason}") from exc
+            raise RuntimeError(f"Failed to reach Google Gemini API: {exc.reason}") from exc
 
     @staticmethod
     def _encode_png_bytes(image_hwc: np.ndarray) -> bytes:
         try:
             from PIL import Image
         except (ImportError, ModuleNotFoundError) as exc:  # pragma: no cover - depends on optional install
-            raise RuntimeError("Google Nano Banana parsing backend requires Pillow for image conversion.") from exc
+            raise RuntimeError("Google Gemini parsing backend requires Pillow for image conversion.") from exc
 
         buffer = io.BytesIO()
         Image.fromarray(image_hwc).save(buffer, format="PNG")
@@ -208,12 +208,12 @@ class GoogleNanoBananaParsingBackend(BaseHumanParsingBackend):
                 if isinstance(part, dict) and isinstance(part.get("text"), str):
                     text_parts.append(part["text"])
         if not text_parts:
-            raise RuntimeError("Google Nano Banana API response did not include a JSON text payload.")
+            raise RuntimeError("Google Gemini API response did not include a JSON text payload.")
 
         candidate_text = _strip_json_fences("\n".join(text_parts))
         payload = json.loads(candidate_text)
         if not isinstance(payload, dict) or not isinstance(payload.get("segments"), list):
-            raise RuntimeError("Google Nano Banana API response JSON must contain a top-level 'segments' list.")
+            raise RuntimeError("Google Gemini API response JSON must contain a top-level 'segments' list.")
         return payload
 
     @staticmethod
@@ -225,7 +225,7 @@ class GoogleNanoBananaParsingBackend(BaseHumanParsingBackend):
         mask = np.zeros((height, width), dtype=np.int32)
         segments = payload.get("segments", [])
         if not isinstance(segments, list):
-            raise RuntimeError("Google Nano Banana API response JSON must contain a list of segments.")
+            raise RuntimeError("Google Gemini API response JSON must contain a list of segments.")
 
         for segment in segments:
             if not isinstance(segment, dict):
