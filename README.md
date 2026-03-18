@@ -15,7 +15,7 @@ Minimal ComfyUI custom node package for preparing cutout rigging layers from a s
 - `limbs_union_mask`
 - `torso_hole_mask`
 
-The node uses a single lazy-loaded human parsing backend interface. The default backend supports only the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the dependency or model is unavailable.
+The node uses a single lazy-loaded human parsing backend interface. By default it uses the verified Hugging Face semantic segmentation model `mattmdjaga/segformer_b2_clothes`, and raises a clear runtime error if the dependency or model is unavailable.
 
 ### Canonical parts
 
@@ -68,6 +68,25 @@ If you are using a portable ComfyUI build on Windows, run the command with Comfy
 ```
 
 After installing the dependencies, restart ComfyUI and confirm that `Cutout Rigging Splitter` appears in the custom node list.
+
+## Optional Google Nano Banana / Gemini parsing backend
+
+For Google multimodal parsing, set:
+
+```bash
+export COMFY_EASYCUT_PARSING_BACKEND=google_nano_banana
+export GOOGLE_API_KEY=your_google_api_key
+```
+
+Optional overrides:
+
+```bash
+export COMFY_EASYCUT_GOOGLE_MODEL=gemini-2.5-flash-image
+export COMFY_EASYCUT_GOOGLE_API_BASE=https://generativelanguage.googleapis.com/v1beta/models
+export COMFY_EASYCUT_GOOGLE_TIMEOUT_SECONDS=60
+```
+
+The Google image API is used for image recognition and structured region extraction. Because Nano Banana/Gemini does not directly return dense semantic masks, this backend asks the model for strict JSON segment regions and reconstructs the label mask locally from returned row spans and boxes before passing it through the standard rigging pipeline.
 
 ## Notes
 

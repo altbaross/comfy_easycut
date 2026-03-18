@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
+import os
 import unittest
+from unittest import mock
 
 import numpy as np
 import torch
 
 from comfyui_cutout_rigging_splitter import NODE_CLASS_MAPPINGS
+from comfyui_cutout_rigging_splitter.backends import build_human_parsing_backend_from_environment
 from comfyui_cutout_rigging_splitter.backends.base import BaseHumanParsingBackend
+from comfyui_cutout_rigging_splitter.backends.google_nano_banana_parsing import (
+    GOOGLE_NANO_BANANA_BACKEND_NAME,
+    GoogleNanoBananaParsingBackend,
+)
 from comfyui_cutout_rigging_splitter.backends.pose_backend_optional import BasePoseRefinementBackend
 from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import (
     DEFAULT_MODEL_ID_TO_LABEL,
@@ -135,7 +143,122 @@ class TrackingPoseRefiner(BasePoseRefinementBackend):
         return refined
 
 
+class GoogleNanoBananaRequestRecorder:
+    def __init__(self, response_text: str) -> None:
+        self.response_text = response_text
+        self.calls: list[tuple[str, dict[str, str], bytes, float]] = []
+
+    def __call__(self, url: str, headers: dict[str, str], data: bytes, timeout: float) -> str:
+        self.calls.append((url, headers, data, timeout))
+        return self.response_text
+
+
 class CutoutRiggingSplitterTests(unittest.TestCase):
+    def test_google_nano_banana_backend_requires_api_key(self) -> None:
+        backend = GoogleNanoBananaParsingBackend(api_key="")
+
+        with self.assertRaisesRegex(RuntimeError, "API key"):
+            backend.load(torch.device("cpu"))
+
+    def test_google_nano_banana_backend_builds_gemini_request_and_rasterizes_segments(self) -> None:
+        recorder = GoogleNanoBananaRequestRecorder(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "analysis": {
+                                                    "subject_summary": "single anime character",
+                                                    "visual_style": "2d_animation_illustration",
+                                                    "primary_character_count": 1,
+                                                },
+                                                "segments": [
+                                                    {"label_id": 2, "label": "hair", "rows": [{"y": 0, "x0": 1, "x1": 3}]},
+                                                    {"label_id": 11, "label": "face", "boxes": [{"y0": 1, "x0": 1, "y1": 3, "x1": 3}]},
+                                                    {"label": "left-arm", "rows": [{"y": 2, "x0": 0, "x1": 1}]},
+                                                ],
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        )
+        backend = GoogleNanoBananaParsingBackend(
+            api_key="test-key",
+            model_id="gemini-test",
+            request_sender=recorder,
+        )
+        image = torch.ones((1, 3, 4, 3), dtype=torch.float32)
+
+        outputs = backend.infer(image)
+
+        self.assertEqual(len(outputs), 1)
+        mask = outputs[0]
+        self.assertEqual(mask.dtype, np.int32)
+        self.assertEqual(int(mask[0, 1]), 2)
+        self.assertEqual(int(mask[1, 1]), 11)
+        self.assertEqual(int(mask[2, 0]), 14)
+        self.assertEqual(backend.last_analysis[0]["visual_style"], "2d_animation_illustration")
+        self.assertEqual(len(recorder.calls), 1)
+        request_url, headers, data, timeout = recorder.calls[0]
+        self.assertIn("gemini-test:generateContent", request_url)
+        self.assertIn("key=test-key", request_url)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(timeout, 60.0)
+        request_body = json.loads(data.decode("utf-8"))
+        self.assertEqual(request_body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(request_body["contents"][0]["parts"][1]["inline_data"]["mime_type"], "image/png")
+
+    def test_google_nano_banana_backend_accepts_direct_json_payload(self) -> None:
+        backend = GoogleNanoBananaParsingBackend(
+            api_key="test-key",
+            request_sender=GoogleNanoBananaRequestRecorder(
+                json.dumps(
+                    {
+                        "analysis": {"subject_summary": "direct payload"},
+                        "segments": [
+                            {"label": "pants", "boxes": [{"y0": 0, "x0": 0, "y1": 2, "x1": 2}]},
+                        ],
+                    }
+                )
+            ),
+        )
+        image = torch.ones((1, 2, 3, 3), dtype=torch.float32)
+
+        outputs = backend.infer(image)
+
+        self.assertEqual(int(outputs[0][0, 0]), 6)
+        self.assertEqual(backend.last_analysis[0]["subject_summary"], "direct payload")
+
+    def test_build_human_parsing_backend_from_environment_supports_google_nano_banana(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "COMFY_EASYCUT_PARSING_BACKEND": GOOGLE_NANO_BANANA_BACKEND_NAME,
+                "GOOGLE_API_KEY": "env-key",
+                "COMFY_EASYCUT_GOOGLE_MODEL": "gemini-env",
+            },
+            clear=False,
+        ):
+            backend = build_human_parsing_backend_from_environment()
+
+        self.assertIsInstance(backend, GoogleNanoBananaParsingBackend)
+        self.assertEqual(backend.api_key, "env-key")
+        self.assertEqual(backend.model_id, "gemini-env")
+
+    def test_build_human_parsing_backend_from_environment_rejects_unknown_backend(self) -> None:
+        with mock.patch.dict(os.environ, {"COMFY_EASYCUT_PARSING_BACKEND": "unknown-backend"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "Unsupported COMFY_EASYCUT_PARSING_BACKEND"):
+                build_human_parsing_backend_from_environment()
+
     def test_process_returns_zeros_when_no_parts_detected(self) -> None:
         image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
         outputs = [np.zeros((3, 2), dtype=np.int32)]

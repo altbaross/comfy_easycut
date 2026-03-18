@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 
-from .backends import BaseHumanParsingBackend, BasePoseRefinementBackend, TransformersHumanParsingBackend
+from .backends import (
+    BaseHumanParsingBackend,
+    BasePoseRefinementBackend,
+    build_human_parsing_backend_from_environment,
+)
 from .constants import (
     CANONICAL_PARTS,
     DEFAULT_MASK_THRESHOLD,
@@ -52,7 +56,7 @@ class CutoutRiggingSplitter:
         backend: BaseHumanParsingBackend | None = None,
         pose_refiner: BasePoseRefinementBackend | None = None,
     ) -> None:
-        self.backend = backend or TransformersHumanParsingBackend()
+        self.backend = backend or build_human_parsing_backend_from_environment()
         self.pose_refiner = pose_refiner
         self.last_crop_boxes: dict[str, tuple[int, int, int, int] | None] = {}
 
