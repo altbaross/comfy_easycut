@@ -31,6 +31,10 @@ _SPECIAL_LABEL_PARTS = frozenset({"pants"})
 _UPPER_CLOTHES_LABEL_ID = 4
 
 
+def _normalize_label_name(label_name: object) -> str:
+    return str(label_name).strip().lower().replace("_", "-").replace(" ", "-")
+
+
 class CutoutRiggingSplitter:
     CATEGORY = "CutoutAnimation/Processing"
     FUNCTION = "process"
@@ -94,11 +98,11 @@ class CutoutRiggingSplitter:
         return part_masks
 
     def _label_ids_for_names(self, *label_names: str) -> set[int]:
-        normalized_targets = {str(label_name).strip().lower().replace("_", "-").replace(" ", "-") for label_name in label_names}
+        normalized_targets = {_normalize_label_name(label_name) for label_name in label_names}
         return {
             int(label_id)
             for label_id, label_name in getattr(self.backend, "id_to_label", {}).items()
-            if str(label_name).strip().lower().replace("_", "-").replace(" ", "-") in normalized_targets
+            if _normalize_label_name(label_name) in normalized_targets
         }
 
     @staticmethod
@@ -117,9 +121,14 @@ class CutoutRiggingSplitter:
         x1 = int(nonzero[:, 1].max().item()) + 1
         height = y1 - y0
         width = x1 - x0
+        # A meaningful two-eye crop needs at least a shallow vertical band and
+        # enough horizontal space to keep the left and right windows distinct.
         if height < 2 or width < 3:
             return torch.zeros_like(face_mask, dtype=torch.float32)
 
+        # For 2D illustration faces, eyes typically sit in the upper-middle face
+        # band with a small center gap for the nose bridge. These proportional
+        # windows intentionally bias toward that anime/cutout layout.
         eye_band_y0 = y0 + max(0, int(round(height * 0.2)))
         eye_band_y1 = min(y1, y0 + max(int(round(height * 0.55)), eye_band_y0 - y0 + 1))
         left_eye_x0 = x0 + max(0, int(round(width * 0.1)))
