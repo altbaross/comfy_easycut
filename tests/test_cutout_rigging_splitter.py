@@ -87,6 +87,17 @@ class LoadTrackingBackend(StubParsingBackend):
 
 
 class CutoutRiggingSplitterTests(unittest.TestCase):
+    def test_process_returns_zeros_when_no_parts_detected(self) -> None:
+        image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
+        outputs = [np.zeros((3, 2), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=8)
+
+        self.assertEqual(len(result), 14)
+        for index, tensor in enumerate(result):
+            self.assertEqual(float(tensor.sum()), 0.0, f"expected zero output at index {index}")
+
     def test_default_backend_uses_explicit_verified_label_constants(self) -> None:
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[11], "face")
         self.assertEqual(DEFAULT_MODEL_ID_TO_LABEL[14], "left-arm")
