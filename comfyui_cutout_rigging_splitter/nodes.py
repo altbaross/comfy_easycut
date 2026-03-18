@@ -52,6 +52,11 @@ def _normalize_label_name(label_name: object) -> str:
     return str(label_name).strip().lower().replace("_", "-").replace(" ", "-")
 
 
+def _coerce_string_input(value: object, default: str = "") -> str:
+    normalized = str(value).strip()
+    return normalized or default
+
+
 class CutoutRiggingSplitter:
     CATEGORY = "CutoutAnimation/Processing"
     FUNCTION = "process"
@@ -479,9 +484,9 @@ class GoogleNanoBananaConnector:
         timeout_seconds: float = GOOGLE_NANO_BANANA_TIMEOUT_SECONDS,
     ) -> tuple[BaseHumanParsingBackend]:
         backend = GoogleNanoBananaParsingBackend(
-            api_key=str(api_key).strip(),
-            model_id=str(model_id).strip() or GOOGLE_NANO_BANANA_MODEL_ID,
-            api_base=str(api_base).strip() or GOOGLE_NANO_BANANA_API_BASE,
+            api_key=_coerce_string_input(api_key),
+            model_id=_coerce_string_input(model_id, GOOGLE_NANO_BANANA_MODEL_ID),
+            api_base=_coerce_string_input(api_base, GOOGLE_NANO_BANANA_API_BASE),
             timeout_seconds=float(timeout_seconds),
         )
         return (backend,)
