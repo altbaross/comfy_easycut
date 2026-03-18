@@ -93,7 +93,7 @@ class CutoutRiggingSplitter:
     def _resolve_backend(self, backend: BaseHumanParsingBackend | None = None) -> BaseHumanParsingBackend:
         active_backend = backend or self.backend
         if not isinstance(active_backend, BaseHumanParsingBackend):
-            raise RuntimeError("human_parsing_backend input must provide a BaseHumanParsingBackend instance.")
+            raise RuntimeError("Configured human parsing backend must provide a BaseHumanParsingBackend instance.")
         return active_backend
 
     def _part_masks_from_labels(
@@ -483,8 +483,11 @@ class GoogleNanoBananaConnector:
         api_base: str = GOOGLE_NANO_BANANA_API_BASE,
         timeout_seconds: float = GOOGLE_NANO_BANANA_TIMEOUT_SECONDS,
     ) -> tuple[BaseHumanParsingBackend]:
+        normalized_api_key = _coerce_string_input(api_key)
+        if not normalized_api_key:
+            raise ValueError("api_key must not be empty.")
         backend = GoogleNanoBananaParsingBackend(
-            api_key=_coerce_string_input(api_key),
+            api_key=normalized_api_key,
             model_id=_coerce_string_input(model_id, GOOGLE_NANO_BANANA_MODEL_ID),
             api_base=_coerce_string_input(api_base, GOOGLE_NANO_BANANA_API_BASE),
             timeout_seconds=float(timeout_seconds),

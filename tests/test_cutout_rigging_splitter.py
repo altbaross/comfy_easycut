@@ -306,9 +306,15 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(backend.api_base, "https://example.invalid/models")
         self.assertEqual(backend.timeout_seconds, 45.0)
 
+    def test_google_nano_banana_connector_requires_non_empty_api_key(self) -> None:
+        connector = GoogleNanoBananaConnector()
+
+        with self.assertRaisesRegex(ValueError, "api_key must not be empty"):
+            connector.build_backend(api_key="   ")
+
     def test_process_prefers_connected_human_parsing_backend_over_default_backend(self) -> None:
         image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
-        connected_outputs = [
+        test_label_array = [
             np.array(
                 [
                     [1, 2],
@@ -318,13 +324,13 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
                 dtype=np.int32,
             )
         ]
-        node = CutoutRiggingSplitter(backend=NonListParsingBackend(connected_outputs))
+        node = CutoutRiggingSplitter(backend=NonListParsingBackend(test_label_array))
 
         result = node.process(
             image,
             feathering_amount=0,
             padding=0,
-            human_parsing_backend=StubParsingBackend(connected_outputs),
+            human_parsing_backend=StubParsingBackend(test_label_array),
         )
 
         self.assertGreater(float(result[1].sum()), 0.0)
