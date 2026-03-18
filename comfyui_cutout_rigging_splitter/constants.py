@@ -1,5 +1,7 @@
 CANONICAL_PARTS = (
     "head",
+    "eyes",
+    "hair",
     "torso",
     "arm_left",
     "arm_right",
@@ -16,6 +18,10 @@ DEFAULT_EMPTY_CROP_SIZE = 1
 PART_OUTPUT_NAMES = (
     "head_image",
     "head_mask",
+    "eyes_image",
+    "eyes_mask",
+    "hair_image",
+    "hair_mask",
     "torso_image",
     "torso_mask",
     "arm_left_image",
@@ -31,6 +37,10 @@ PART_OUTPUT_NAMES = (
 )
 
 RETURN_TYPES = (
+    "IMAGE",
+    "MASK",
+    "IMAGE",
+    "MASK",
     "IMAGE",
     "MASK",
     "IMAGE",

@@ -21,9 +21,10 @@ class BasePoseRefinementBackend(ABC):
 
         Args:
             image_bhwc: Input image tensor with shape ``[B, H, W, 3]``.
-            part_masks: Canonical part masks keyed by ``head``, ``torso``,
-                ``arm_left``, ``arm_right``, ``leg_left``, and ``leg_right``.
-                Each tensor must have shape ``[B, H, W]`` and values in ``[0, 1]``.
+            part_masks: Canonical part masks keyed by ``head``, ``eyes``,
+                ``hair``, ``torso``, ``arm_left``, ``arm_right``, ``leg_left``,
+                and ``leg_right``. Each tensor must have shape ``[B, H, W]``
+                and values in ``[0, 1]``.
 
         Returns:
             A dictionary with the same canonical keys and mask tensor shapes.

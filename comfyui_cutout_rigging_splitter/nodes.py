@@ -93,6 +93,73 @@ class CutoutRiggingSplitter:
 
         return part_masks
 
+    def _label_ids_for_names(self, *label_names: str) -> set[int]:
+        normalized_targets = {str(label_name).strip().lower().replace("_", "-").replace(" ", "-") for label_name in label_names}
+        return {
+            int(label_id)
+            for label_id, label_name in getattr(self.backend, "id_to_label", {}).items()
+            if str(label_name).strip().lower().replace("_", "-").replace(" ", "-") in normalized_targets
+        }
+
+    @staticmethod
+    def _make_eye_mask(face_mask: torch.Tensor) -> torch.Tensor:
+        if face_mask.ndim != 2:
+            raise ValueError("_make_eye_mask expects a [H, W] face mask.")
+
+        binary = face_mask > 0.5
+        if not bool(binary.any()):
+            return torch.zeros_like(face_mask, dtype=torch.float32)
+
+        nonzero = torch.nonzero(binary, as_tuple=False)
+        y0 = int(nonzero[:, 0].min().item())
+        y1 = int(nonzero[:, 0].max().item()) + 1
+        x0 = int(nonzero[:, 1].min().item())
+        x1 = int(nonzero[:, 1].max().item()) + 1
+        height = y1 - y0
+        width = x1 - x0
+        if height < 2 or width < 3:
+            return torch.zeros_like(face_mask, dtype=torch.float32)
+
+        eye_band_y0 = y0 + max(0, int(round(height * 0.2)))
+        eye_band_y1 = min(y1, y0 + max(int(round(height * 0.55)), eye_band_y0 - y0 + 1))
+        left_eye_x0 = x0 + max(0, int(round(width * 0.1)))
+        left_eye_x1 = min(x1, x0 + max(int(round(width * 0.4)), left_eye_x0 - x0 + 1))
+        right_eye_x0 = min(x1 - 1, x0 + max(int(round(width * 0.6)), left_eye_x1 - x0 + 1))
+        right_eye_x1 = min(x1, x0 + max(int(round(width * 0.9)), right_eye_x0 - x0 + 1))
+
+        eye_windows = torch.zeros_like(face_mask, dtype=torch.float32)
+        eye_windows[eye_band_y0:eye_band_y1, left_eye_x0:left_eye_x1] = 1.0
+        eye_windows[eye_band_y0:eye_band_y1, right_eye_x0:right_eye_x1] = 1.0
+        return (eye_windows * binary.to(torch.float32)).clamp(0.0, 1.0)
+
+    def _derive_illustration_part_masks(
+        self,
+        label_masks: list[torch.Tensor],
+        part_masks: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        face_label_ids = self._label_ids_for_names("face")
+        if not face_label_ids:
+            return part_masks
+
+        for batch_index, label_mask in enumerate(label_masks):
+            sample_mask = label_mask.to(device=part_masks["head"].device, dtype=torch.int64)
+            face_mask = torch.zeros_like(part_masks["head"][batch_index])
+            for label_id in face_label_ids:
+                face_mask = torch.maximum(face_mask, (sample_mask == label_id).to(torch.float32))
+            if float(face_mask.max()) == 0.0:
+                continue
+
+            eyes_mask = self._make_eye_mask(face_mask)
+            part_masks["eyes"][batch_index] = eyes_mask
+            if float(part_masks["hair"][batch_index].max()) > 0.0:
+                part_masks["head"][batch_index] = (
+                    part_masks["head"][batch_index] * (1.0 - part_masks["hair"][batch_index])
+                ).clamp(0.0, 1.0)
+            if float(eyes_mask.max()) > 0.0:
+                part_masks["head"][batch_index] = (part_masks["head"][batch_index] * (1.0 - eyes_mask)).clamp(0.0, 1.0)
+
+        return part_masks
+
     def _redistribute_garments_to_limbs(
         self,
         label_masks: list[torch.Tensor],
@@ -262,6 +329,7 @@ class CutoutRiggingSplitter:
         label_arrays = self._load_and_infer(image)
         label_masks = self._coerce_label_masks(label_arrays, image)
         logical_part_masks = self._part_masks_from_labels(label_masks, image)
+        logical_part_masks = self._derive_illustration_part_masks(label_masks, logical_part_masks)
         logical_part_masks = self._redistribute_garments_to_limbs(label_masks, logical_part_masks)
         logical_part_masks = select_primary_person_masks(logical_part_masks)
         logical_part_masks = self._maybe_refine_with_pose(image, logical_part_masks, enable_pose_refinement)
@@ -301,6 +369,10 @@ class CutoutRiggingSplitter:
         return (
             part_images["head"],
             output_part_masks["head"],
+            part_images["eyes"],
+            output_part_masks["eyes"],
+            part_images["hair"],
+            output_part_masks["hair"],
             part_images["torso"],
             output_part_masks["torso"],
             part_images["arm_left"],

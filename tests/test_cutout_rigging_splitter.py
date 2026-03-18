@@ -143,7 +143,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=8)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         for index, tensor in enumerate(result):
             self.assertEqual(float(tensor.sum()), 0.0, f"expected zero output at index {index}")
 
@@ -154,6 +154,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[5], "torso")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[6], "pants")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[8], "torso")
+        self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[2], "hair")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[11], "head")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[14], "arm_left")
         self.assertEqual(DEFAULT_MODEL_LABEL_ID_TO_PART[15], "arm_right")
@@ -190,21 +191,25 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         for index, tensor in enumerate(result):
-            expected_shape = (2, 4, 3, 3) if index % 2 == 0 and index < 12 else (2, 4, 3)
+            expected_shape = (2, 4, 3, 3) if index % 2 == 0 and index < 16 else (2, 4, 3)
             self.assertEqual(tensor.shape, expected_shape)
             self.assertEqual(tensor.dtype, torch.float32)
 
         head_mask = result[1]
-        torso_mask = result[3]
-        arm_left_mask = result[5]
-        arm_right_mask = result[7]
-        leg_left_mask = result[9]
-        leg_right_mask = result[11]
-        limbs_union_mask = result[12]
+        eyes_mask = result[3]
+        hair_mask = result[5]
+        torso_mask = result[7]
+        arm_left_mask = result[9]
+        arm_right_mask = result[11]
+        leg_left_mask = result[13]
+        leg_right_mask = result[15]
+        limbs_union_mask = result[16]
 
         self.assertTrue(torch.equal(head_mask[0, 0], torch.tensor([1.0, 1.0, 0.0])))
+        self.assertEqual(float(eyes_mask.sum()), 0.0)
+        self.assertEqual(float(hair_mask.sum()), 0.0)
         self.assertTrue(torch.equal(torso_mask[0, 0], torch.tensor([0.0, 0.0, 1.0])))
         self.assertEqual(float(arm_left_mask[1].sum()), 0.0)
         self.assertEqual(float(arm_right_mask[1].sum()), 0.0)
@@ -235,10 +240,12 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         self.assertEqual(result[0].shape, (1, 2, 2, 3))
         self.assertEqual(result[1].shape, (1, 2, 2))
-        self.assertEqual(result[2].shape, (1, 2, 2, 3))
-        self.assertEqual(result[7].shape, (1, 1, 1))
-        self.assertEqual(float(result[7].sum()), 0.0)
+        self.assertEqual(result[6].shape, (1, 2, 2, 3))
+        self.assertEqual(result[11].shape, (1, 1, 1))
+        self.assertEqual(float(result[11].sum()), 0.0)
         self.assertEqual(node.last_crop_boxes["head"], (0, 2, 0, 2))
+        self.assertIsNone(node.last_crop_boxes["eyes"])
+        self.assertIsNone(node.last_crop_boxes["hair"])
         self.assertIsNone(node.last_crop_boxes["arm_right"])
 
     def test_crop_mode_falls_back_to_full_canvas_for_batch(self) -> None:
@@ -272,7 +279,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         result = node.process(image, feathering_amount=0, padding=0)
 
         head_mask = result[1][0]
-        torso_mask = result[3][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(head_mask[4, 4]), 0.0)
         self.assertEqual(float(torso_mask[5, 4]), 0.0)
         self.assertEqual(float(head_mask[0, 1]), 1.0)
@@ -304,8 +311,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        leg_left_mask = result[9]
-        leg_right_mask = result[11]
+        leg_left_mask = result[13]
+        leg_right_mask = result[15]
         self.assertTrue(torch.equal(leg_left_mask[0, 1], torch.tensor([0.0, 1.0, 1.0, 0.0, 0.0, 0.0])))
         self.assertTrue(torch.equal(leg_right_mask[0, 1], torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 0.0])))
         self.assertTrue(torch.equal(leg_left_mask[1, 1], torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])))
@@ -328,9 +335,38 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        torso_mask = result[3][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(torso_mask[1, 1]), 1.0)
         self.assertEqual(float(torso_mask[1, 2]), 1.0)
+
+    def test_process_separates_hair_and_derives_eyes_for_illustration_face_labels(self) -> None:
+        image = torch.ones((1, 6, 8, 3), dtype=torch.float32)
+        outputs = [
+            np.array(
+                [
+                    [0, 0, 2, 2, 2, 2, 0, 0],
+                    [0, 0, 2, 2, 2, 2, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 11, 11, 11, 11, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=ClothingParsingBackend(outputs))
+
+        result = node.process(image, feathering_amount=0, padding=0)
+
+        head_mask = result[1][0]
+        eyes_mask = result[3][0]
+        hair_mask = result[5][0]
+        self.assertEqual(float(hair_mask[0:2, 2:6].sum()), 8.0)
+        self.assertEqual(float(hair_mask.sum()), 8.0)
+        self.assertGreater(float(eyes_mask.sum()), 0.0)
+        self.assertEqual(float(head_mask[0:2, 2:6].sum()), 0.0)
+        self.assertEqual(float((head_mask * eyes_mask).sum()), 0.0)
+        self.assertEqual(float(head_mask[4, 3]), 1.0)
 
     def test_process_redistributes_upper_clothes_touching_arm_to_arm_mask(self) -> None:
         image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
@@ -349,8 +385,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        arm_left_mask = result[5][0]
-        torso_mask = result[3][0]
+        arm_left_mask = result[9][0]
+        torso_mask = result[7][0]
         self.assertEqual(float(arm_left_mask.sum()), 3.0)
         self.assertEqual(float(arm_left_mask[1, 2]), 1.0)
         self.assertEqual(float(arm_left_mask[2, 2]), 1.0)
@@ -375,8 +411,8 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        limbs_union_mask = result[12][0]
-        torso_hole_mask = result[13][0]
+        limbs_union_mask = result[16][0]
+        torso_hole_mask = result[17][0]
         self.assertEqual(float(limbs_union_mask.sum()), 2.0)
         self.assertEqual(float(torso_hole_mask.sum()), 1.0)
         self.assertEqual(float(torso_hole_mask[2, 1]), 1.0)
@@ -437,7 +473,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
             morphology_strength=8,
             mask_threshold=1.0,
         )
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         with self.assertRaisesRegex(ValueError, "feathering_amount"):
             node.process(image, feathering_amount=-1, padding=0)
         with self.assertRaisesRegex(ValueError, "padding"):
@@ -457,7 +493,7 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
 
         result = node.process(image, feathering_amount=0, padding=0)
 
-        self.assertEqual(len(result), 14)
+        self.assertEqual(len(result), 18)
         self.assertEqual(backend.loaded_device, image.device)
 
     def test_process_requires_backend_load_method(self) -> None:

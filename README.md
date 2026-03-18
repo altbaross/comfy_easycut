@@ -8,7 +8,7 @@ Minimal ComfyUI custom node package for preparing cutout rigging layers from a s
 
 ## Current scope
 
-`CutoutRiggingSplitter` is implemented as a production-oriented ComfyUI node with a stable default output schema:
+`CutoutRiggingSplitter` is implemented as a production-oriented ComfyUI node tuned for 2D animation illustration cutout prep, with a stable default output schema:
 
 - full-canvas RGB image per canonical part
 - full-canvas mask per canonical part
@@ -22,13 +22,15 @@ The node uses a single lazy-loaded human parsing backend interface. The default 
 The node groups backend labels into these canonical rigging parts:
 
 - `head`
+- `eyes`
+- `hair`
 - `torso`
 - `arm_left`
 - `arm_right`
 - `leg_left`
 - `leg_right`
 
-The backend-specific mapping is explicit and verified. Hair maps to `head`, dress/scarf/skirt/belt map to `torso`, left/right shoes map to the corresponding leg outputs, and the shared `pants` label is split across `leg_left` and `leg_right` by mask midpoint. Missing parts return zero images and zero masks instead of raising errors.
+The backend-specific mapping is explicit and verified. Hair maps to `hair`, face-derived eye windows map to `eyes`, dress/scarf/skirt/belt map to `torso`, left/right shoes map to the corresponding leg outputs, and the shared `pants` label is split across `leg_left` and `leg_right` by mask midpoint. The remaining face/head area stays in `head`, and missing parts return zero images and zero masks instead of raising errors.
 
 ### Optional controls
 
