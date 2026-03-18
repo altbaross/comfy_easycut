@@ -132,6 +132,14 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
         self.assertGreater(float(head_mask[0, 1, 0]), 0.0)
         self.assertLess(float(head_mask[0, 1, 0]), 1.0)
 
+    def test_process_raises_clear_error_for_invalid_backend_mask_shape(self) -> None:
+        image = torch.ones((1, 4, 4, 3), dtype=torch.float32)
+        outputs = [np.zeros((2, 2), dtype=np.int32)]
+        node = CutoutRiggingSplitter(backend=StubParsingBackend(outputs))
+
+        with self.assertRaisesRegex(RuntimeError, "invalid label mask shape"):
+            node.process(image, feathering_amount=0, padding=0)
+
 
 if __name__ == "__main__":
     unittest.main()
