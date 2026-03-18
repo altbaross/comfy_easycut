@@ -21,7 +21,7 @@ from comfyui_cutout_rigging_splitter.backends.transformers_human_parsing import 
     DEFAULT_MODEL_LABEL_ID_TO_PART,
     TransformersHumanParsingBackend,
 )
-from comfyui_cutout_rigging_splitter.nodes import CutoutRiggingSplitter
+from comfyui_cutout_rigging_splitter.nodes import CutoutRiggingSplitter, GoogleNanoBananaConnector
 
 
 class StubParsingBackend(BaseHumanParsingBackend):
@@ -287,6 +287,54 @@ class CutoutRiggingSplitterTests(unittest.TestCase):
     def test_node_registration_exports_expected_class(self) -> None:
         self.assertIn("CutoutRiggingSplitter", NODE_CLASS_MAPPINGS)
         self.assertIs(NODE_CLASS_MAPPINGS["CutoutRiggingSplitter"], CutoutRiggingSplitter)
+        self.assertIn("GoogleNanoBananaConnector", NODE_CLASS_MAPPINGS)
+        self.assertIs(NODE_CLASS_MAPPINGS["GoogleNanoBananaConnector"], GoogleNanoBananaConnector)
+
+    def test_google_nano_banana_connector_builds_backend(self) -> None:
+        connector = GoogleNanoBananaConnector()
+
+        (backend,) = connector.build_backend(
+            api_key=" node-key ",
+            model_id="gemini-node",
+            api_base="https://example.invalid/models",
+            timeout_seconds=45,
+        )
+
+        self.assertIsInstance(backend, GoogleNanoBananaParsingBackend)
+        self.assertEqual(backend.api_key, "node-key")
+        self.assertEqual(backend.model_id, "gemini-node")
+        self.assertEqual(backend.api_base, "https://example.invalid/models")
+        self.assertEqual(backend.timeout_seconds, 45.0)
+
+    def test_google_nano_banana_connector_requires_non_empty_api_key(self) -> None:
+        connector = GoogleNanoBananaConnector()
+
+        with self.assertRaisesRegex(ValueError, "api_key must not be empty"):
+            connector.build_backend(api_key="   ")
+
+    def test_process_prefers_connected_human_parsing_backend_over_default_backend(self) -> None:
+        image = torch.ones((1, 3, 2, 3), dtype=torch.float32)
+        test_label_array = [
+            np.array(
+                [
+                    [1, 2],
+                    [0, 0],
+                    [0, 0],
+                ],
+                dtype=np.int32,
+            )
+        ]
+        node = CutoutRiggingSplitter(backend=NonListParsingBackend(test_label_array))
+
+        result = node.process(
+            image,
+            feathering_amount=0,
+            padding=0,
+            human_parsing_backend=StubParsingBackend(test_label_array),
+        )
+
+        self.assertGreater(float(result[1].sum()), 0.0)
+        self.assertGreater(float(result[7].sum()), 0.0)
 
     def test_process_returns_full_canvas_outputs_for_batch(self) -> None:
         image = torch.arange(2 * 4 * 3 * 3, dtype=torch.float32).reshape(2, 4, 3, 3) / 100.0
